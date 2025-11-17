@@ -1,6 +1,6 @@
 # pybubble
 
-A simple wrapper around `bwrap` to create sandbox environments for executing code. It works without Docker or other daemon-based container runtimes, using shared read-only root filesystems for quick (1-2ms) setup times.
+A simple wrapper around [bubblewrap](https://github.com/containers/bubblewrap) to create sandbox environments for executing code. It works without Docker or other daemon-based container runtimes, using shared read-only root filesystems for quick (1-2ms) setup times.
 
 While these environments are sandboxed and provide protection from accidental modification of your host system by overzealous LLMs, **pybubble is not an acceptable substitute for virtualization when running untrusted code**. If you are giving untrusted people access to this, either directly or via an LLM frontend, consider using more production-ready sandboxing or virtualization tools with pybubble just isolating environment state.
 
