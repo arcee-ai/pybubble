@@ -2,7 +2,6 @@ import asyncio
 from pathlib import Path
 import subprocess
 import tempfile
-import shlex
 
 from pybubble.rootfs import setup_rootfs
 
@@ -74,17 +73,19 @@ class Sandbox:
             "--unshare-user",
             "--uid", "1000",
             # Bind root fs and work dir
-            "--ro-bind", shlex.quote(str(self.rootfs_dir.absolute())), "/",
-            "--bind", shlex.quote(str(self.work_dir.absolute())), "/home/sandbox",
+            "--ro-bind", str(self.rootfs_dir.absolute()), "/",
+            "--bind", str(self.work_dir.absolute()), "/home/sandbox",
             # Bind new /dev/ and /proc/ dirs - must happen after rootfs mount
             "--dev", "/dev",
             "--proc", "/proc",
             # Mount the temp dir at /tmp. We can't use --tmpfs because it doesn't persist between invocations of bwrap.
-            "--bind", shlex.quote(str(self.tmp_dir.name)), "/tmp",
+            "--bind", str(self.tmp_dir.name), "/tmp",
             # Set home directory and path
             "--setenv", "HOME", "/home/sandbox",
             "--setenv", "PATH", "/usr/bin:/bin:/usr/local/bin",
             "--chdir", "/home/sandbox",
+            # Use --new-session to protect against certain attacks.
+            "--new-session",
         ]
         
         if allow_network:
@@ -111,7 +112,15 @@ class Sandbox:
             await process.wait()
             raise TimeoutError(f"Command execution exceeded {timeout} seconds")
         
-        return stdout or b"", stderr or b""
+        stdout = stdout or b""
+        stderr = stderr or b""
+        if process.returncode != 0:
+            raise RuntimeError(
+                f"Command failed with exit code {process.returncode}",
+                stdout,
+                stderr,
+            )
+        return stdout, stderr
 
     async def run_python(self, code: str, allow_network: bool = False, timeout: float = 10.0) -> tuple[bytes, bytes]:
         """Runs a Python script in the sandbox. Returns (stdout, stderr) if the code succeeds, otherwise raises an exception.

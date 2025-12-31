@@ -105,8 +105,9 @@ def cmd_generate_rootfs(args):
 
 def clear_cache(args):
     """Clear the cache."""
-    cache_dir = Path(os.getenv("HOME")) / ".cache" / "pybubble"
-    shutil.rmtree(cache_dir)
+    home = os.getenv("HOME") or str(Path.home())
+    cache_dir = Path(home) / ".cache" / "pybubble"
+    shutil.rmtree(cache_dir, ignore_errors=True)
     return 0
 
 
@@ -123,7 +124,7 @@ def main():
     run_parser = subparsers.add_parser("run", help="Run a shell command in a sandbox")
     run_parser.add_argument(
         "rootfs",
-        help="Path to rootfs tarball or URL"
+        help="Path to rootfs tarball"
     )
     run_parser.add_argument(
         "cmd",
@@ -156,7 +157,7 @@ def main():
     python_parser = subparsers.add_parser("python", help="Run Python code in a sandbox")
     python_parser.add_argument(
         "rootfs",
-        help="Path to rootfs tarball or URL"
+        help="Path to rootfs tarball"
     )
     python_parser.add_argument(
         "--code",
@@ -226,4 +227,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-

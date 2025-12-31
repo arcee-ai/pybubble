@@ -29,6 +29,15 @@ def _get_cache_dir() -> Path:
     return cache_base
 
 
+def _safe_extractall(tar: tarfile.TarFile, path: Path) -> None:
+    """Extract tar contents while preventing path traversal."""
+    for member in tar.getmembers():
+        member_path = Path(member.name)
+        if member_path.is_absolute() or ".." in member_path.parts:
+            raise RuntimeError(f"Unsafe path in tarball: {member.name}")
+    tar.extractall(path)
+
+
 def setup_rootfs(rootfs: str, rootfs_path: Path | None = None) -> Path:
     """Sets up a reusable rootfs from a specified image tarball (local file only).
     
@@ -65,7 +74,7 @@ def setup_rootfs(rootfs: str, rootfs_path: Path | None = None) -> Path:
         
         # Extract the tarball
         with tarfile.open(tarball_path, "r:*") as tar:
-            tar.extractall(rootfs_dir)
+            _safe_extractall(tar, rootfs_dir)
     except Exception as e:
         raise RuntimeError(f"Failed to extract rootfs tarball: {e}") from e
     
@@ -73,7 +82,7 @@ def setup_rootfs(rootfs: str, rootfs_path: Path | None = None) -> Path:
 
 def generate_rootfs(dockerfile: Path, output_file: Path, compress_level: int = 6) -> None:
     """Generates a rootfs from a Dockerfile. Docker must be installed for this to work."""
-    subprocess.run(["docker", "rm", "-f", "pybubble_rootfs"], check=True)
+    subprocess.run(["docker", "rm", "-f", "pybubble_rootfs"], check=False)
     subprocess.run(["docker", "build", "-t", "pybubble_rootfs", "-f", dockerfile, "."], check=True)
     subprocess.run(["docker", "create", "--name", "pybubble_rootfs", "pybubble_rootfs"], check=True)
     subprocess.run(["bash", "-c", f"docker export pybubble_rootfs | gzip -{compress_level} > {output_file}"], check=True)
