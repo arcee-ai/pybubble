@@ -36,3 +36,12 @@ def default_rootfs():
     """Fixture that ensures default.tgz exists and returns its path."""
     return ensure_default_exists()
 
+
+@pytest.fixture
+def run_collect():
+    """Run a sandbox command and collect stdout/stderr."""
+    async def _run(sandbox, command: str, **kwargs):
+        process = await sandbox.run(command, **kwargs)
+        return await process.communicate()
+
+    return _run

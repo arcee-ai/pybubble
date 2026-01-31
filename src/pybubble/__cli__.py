@@ -28,17 +28,20 @@ def cmd_run(args):
         cmd_str = " ".join(args.cmd)
         
         try:
-            stdout, stderr = await sandbox.run(
+            process = await sandbox.run(
                 cmd_str,
                 allow_network=args.network,
-                timeout=args.timeout
+                timeout=args.timeout,
+                stdin_pipe=False,
+                stdout_pipe=False,
+                stderr_pipe=False,
             )
-            
-            if stdout:
-                sys.stdout.buffer.write(stdout)
-            if stderr:
-                sys.stderr.buffer.write(stderr)
-            
+
+            returncode = await process.wait(timeout=args.timeout)
+            if returncode != 0:
+                print(f"Error: Command failed with exit code {returncode}", file=sys.stderr)
+                return 1
+
             return 0
         except Exception as e:
             print(f"Error: {e}", file=sys.stderr)
@@ -148,8 +151,8 @@ def main():
     run_parser.add_argument(
         "--timeout",
         type=float,
-        default=10.0,
-        help="Command timeout in seconds (default: 10.0)"
+        default=None,
+        help="Command timeout in seconds (default: no timeout)"
     )
     run_parser.set_defaults(func=cmd_run)
     

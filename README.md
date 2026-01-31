@@ -50,7 +50,8 @@ import asyncio
 async def main():
     s = Sandbox("path/to/rootfs.tgz")
 
-    stdout, stderr = await s.run("ping -c 1 google.com", allow_network=True)
+    process = await s.run("ping -c 1 google.com", allow_network=True)
+    stdout, stderr = await process.communicate()
 
     print(stdout.decode("utf-8")) # ping output
 

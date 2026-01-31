@@ -18,21 +18,54 @@ If `rootfs_path` is provided, the root filesystem tarball will be extracted to t
 
 ---
 
-`async def run(self, command: str, allow_network: bool = False, timeout: float = 10.0) -> tuple[bytes, bytes]`
+`async def run(self, command: str, allow_network: bool = False, timeout: float = 10.0, stdin_pipe: bool = True, stdout_pipe: bool = True, stderr_pipe: bool = True) -> SandboxedProcess`
 
 Runs a given shell command in a sandbox. The command is run asynchronously.
 
 If `allow_network` is True, network access is granted to the process and the host's `/etc/resolv.conf` is mounted read-only to the sandbox for DNS resolution.
 
-The argument `timeout` sets a timer for that value, in seconds, and raises a `TimeoutError` if the process takes longer than that.
+The argument `timeout` sets the default timeout (in seconds) used by `SandboxedProcess.wait()` and `SandboxedProcess.communicate()`, which raise `TimeoutError` if the process takes longer than that.
 
-Returns two `bytes` objects, the first being the `stdout` and the second being the `stderr`. 
+If `stdin_pipe` is True, stdin is piped so you can call `SandboxedProcess.send()` / `send_text()`. If False, stdin is inherited from the parent process.
+If `stdout_pipe` or `stderr_pipe` are False, those streams are inherited from the parent process instead of being available for programmatic streaming.
+
+Returns a `SandboxedProcess` that you can use to stream output and send stdin. Common patterns:
+
+```python
+process = await sandbox.run("echo hello")
+stdout, stderr = await process.communicate()
+```
+
+```python
+process = await sandbox.run("bash -c 'echo out; echo err 1>&2'")
+async for stream_name, chunk in process.stream(include_stream=True):
+    print(stream_name, chunk)
+await process.wait(check=True)
+```
+
+For line-oriented streaming:
+
+```python
+process = await sandbox.run("bash -c 'printf \"line1\\nline2\\n\"'")
+async for line in process.stream_lines():
+    print(line, end="")
+await process.wait(check=True)
+```
+
+You can also send input:
+
+```python
+process = await sandbox.run("cat")
+await process.send_text("hello\n")
+process.close_stdin()
+stdout, stderr = await process.communicate()
+```
 
 ---
 
 `async def run_python(self, code: str, allow_network: bool = False, timeout: float = 10.0) -> tuple[bytes, bytes]`
 
-Convenience wrapper for running Python scripts. Creates a file called `script.py` and writes the value of `code` to it, and then runs `python script.py`. Otherwise behaves identically to `run()`. 
+Convenience wrapper for running Python scripts. Creates a file called `script.py` and writes the value of `code` to it, and then runs `python script.py`. Returns `(stdout, stderr)` like the old `run()` behavior.
 
 ## Accessing the session data
 

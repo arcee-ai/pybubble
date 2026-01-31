@@ -5,16 +5,16 @@ from pybubble import Sandbox
 from conftest import ensure_default_exists
 
 @pytest.mark.asyncio
-async def test_sandbox():
+async def test_sandbox(run_collect):
     default_rootfs = ensure_default_exists()
     sandbox = Sandbox(rootfs=str(default_rootfs))
     
     # Test Python and bash functionality
     assert await sandbox.run_python("print('Hello, world!')") == (b"Hello, world!\n", b"")
-    assert await sandbox.run("echo 'hello!'") == (b"hello!\n", b"")
+    assert await run_collect(sandbox, "echo 'hello!'") == (b"hello!\n", b"")
     
     # Test network access
-    assert (await sandbox.run("ping -c 1 google.com", allow_network=True))[1] == b""
+    assert (await run_collect(sandbox, "ping -c 1 google.com", allow_network=True))[1] == b""
     
     # Test cleanup
     work_dir_path = sandbox.work_dir
@@ -25,7 +25,7 @@ async def test_sandbox():
 
 
 @pytest.mark.asyncio
-async def test_work_dir_persistence():
+async def test_work_dir_persistence(run_collect):
     """Test that files persist across sandbox instances when work_dir is provided."""
     default_rootfs = ensure_default_exists()
     
@@ -36,12 +36,12 @@ async def test_work_dir_persistence():
         
         # First sandbox: write a file
         sandbox1 = Sandbox(work_dir=str(work_dir), rootfs=str(default_rootfs))
-        await sandbox1.run("echo 'persistent data' > test_file.txt")
-        await sandbox1.run("echo 'more data' > another_file.txt")
+        await run_collect(sandbox1, "echo 'persistent data' > test_file.txt")
+        await run_collect(sandbox1, "echo 'more data' > another_file.txt")
         work_dir1 = sandbox1.work_dir
         
         # Verify files exist in the first sandbox
-        stdout, stderr = await sandbox1.run("cat test_file.txt")
+        stdout, stderr = await run_collect(sandbox1, "cat test_file.txt")
         assert b"persistent data" in stdout, f"Expected 'persistent data' in stdout, got {stdout} with stderr {stderr}"
         
         # Verify files exist on host filesystem directly in work_dir
@@ -66,14 +66,14 @@ async def test_work_dir_persistence():
         sandbox2 = Sandbox(work_dir=str(work_dir), rootfs=str(default_rootfs))
         
         # Verify second sandbox can read files written by first sandbox
-        stdout, stderr = await sandbox2.run("cat test_file.txt")
+        stdout, stderr = await run_collect(sandbox2, "cat test_file.txt")
         assert b"persistent data" in stdout
         
-        stdout, stderr = await sandbox2.run("cat another_file.txt")
+        stdout, stderr = await run_collect(sandbox2, "cat another_file.txt")
         assert b"more data" in stdout
         
         # Second sandbox writes additional data
-        await sandbox2.run("echo 'from sandbox2' >> test_file.txt")
+        await run_collect(sandbox2, "echo 'from sandbox2' >> test_file.txt")
         
         del sandbox2
         
@@ -88,7 +88,7 @@ async def test_work_dir_persistence():
 
 
 @pytest.mark.asyncio
-async def test_work_dir_python_script_persistence():
+async def test_work_dir_python_script_persistence(run_collect):
     """Test that Python scripts and their outputs persist and are accessible from host filesystem."""
     default_rootfs = ensure_default_exists()
     
@@ -104,7 +104,7 @@ with open('data.json', 'w') as f:
 """)
         
         # Verify the file was created in sandbox
-        stdout, _ = await sandbox1.run("cat data.json")
+        stdout, _ = await run_collect(sandbox1, "cat data.json")
         assert b'{"count": 42}' in stdout
         
         # Verify the file exists on host filesystem directly in work_dir
@@ -130,7 +130,7 @@ with open('data.json', 'w') as f:
 
 
 @pytest.mark.asyncio
-async def test_work_dir_multiple_sandboxes_same_work_dir():
+async def test_work_dir_multiple_sandboxes_same_work_dir(run_collect):
     """Test that multiple sandboxes can share the same work_dir and see each other's files."""
     default_rootfs = ensure_default_exists()
     
@@ -143,17 +143,17 @@ async def test_work_dir_multiple_sandboxes_same_work_dir():
         sandbox2 = Sandbox(work_dir=str(work_dir), rootfs=str(default_rootfs))
         
         # First sandbox writes a file
-        await sandbox1.run("echo 'from sandbox1' > shared_file.txt")
+        await run_collect(sandbox1, "echo 'from sandbox1' > shared_file.txt")
         
         # Second sandbox can read the file written by first sandbox
-        stdout2, _ = await sandbox2.run("cat shared_file.txt")
+        stdout2, _ = await run_collect(sandbox2, "cat shared_file.txt")
         assert b"from sandbox1" in stdout2
         
         # Second sandbox writes to the same file
-        await sandbox2.run("echo 'from sandbox2' >> shared_file.txt")
+        await run_collect(sandbox2, "echo 'from sandbox2' >> shared_file.txt")
         
         # First sandbox can read the updated file
-        stdout1, _ = await sandbox1.run("cat shared_file.txt")
+        stdout1, _ = await run_collect(sandbox1, "cat shared_file.txt")
         assert b"from sandbox1" in stdout1
         assert b"from sandbox2" in stdout1
         
@@ -178,7 +178,7 @@ async def test_work_dir_multiple_sandboxes_same_work_dir():
 
 
 @pytest.mark.asyncio
-async def test_work_dir_host_filesystem_access():
+async def test_work_dir_host_filesystem_access(run_collect):
     """Test that files can be accessed from host filesystem and persist after sandbox deletion."""
     default_rootfs = ensure_default_exists()
     
@@ -190,7 +190,7 @@ async def test_work_dir_host_filesystem_access():
         work_dir_path = sandbox.work_dir
         
         # Write a file from within the sandbox
-        await sandbox.run("echo 'sandbox content' > sandbox_file.txt")
+        await run_collect(sandbox, "echo 'sandbox content' > sandbox_file.txt")
         
         # Verify file exists on host filesystem directly in work_dir
         sandbox_file_path = work_dir_path / "sandbox_file.txt"
@@ -202,7 +202,7 @@ async def test_work_dir_host_filesystem_access():
         host_file_path.write_text("host content")
         
         # Verify sandbox can read the file written from host
-        stdout, _ = await sandbox.run("cat host_file.txt")
+        stdout, _ = await run_collect(sandbox, "cat host_file.txt")
         assert b"host content" in stdout
         
         # Delete sandbox
@@ -220,18 +220,18 @@ async def test_work_dir_host_filesystem_access():
 
 
 @pytest.mark.asyncio
-async def test_dev_null_writable():
+async def test_dev_null_writable(run_collect):
     """Test that /dev/null is writable and discards data."""
     default_rootfs = ensure_default_exists()
     sandbox = Sandbox(rootfs=str(default_rootfs))
     
     # Test writing to /dev/null - should succeed without error
-    stdout, stderr = await sandbox.run("echo 'test data' > /dev/null")
+    stdout, stderr = await run_collect(sandbox, "echo 'test data' > /dev/null")
     assert stdout == b""
     assert stderr == b""
     
     # Test redirecting stdout to /dev/null
-    stdout, stderr = await sandbox.run("echo 'visible' && echo 'hidden' > /dev/null")
+    stdout, stderr = await run_collect(sandbox, "echo 'visible' && echo 'hidden' > /dev/null")
     assert b"visible" in stdout
     assert b"hidden" not in stdout
     
@@ -246,18 +246,18 @@ print('success')
 
 
 @pytest.mark.asyncio
-async def test_tmp_writable():
+async def test_tmp_writable(run_collect):
     """Test that /tmp is writable and files persist within the same sandbox session."""
     default_rootfs = ensure_default_exists()
     sandbox = Sandbox(rootfs=str(default_rootfs))
     
     # Test writing to /tmp
-    stdout, stderr = await sandbox.run("echo 'test content' > /tmp/test_file.txt")
+    stdout, stderr = await run_collect(sandbox, "echo 'test content' > /tmp/test_file.txt")
     assert stdout == b""
     assert stderr == b""
     
     # Test reading from /tmp
-    stdout, stderr = await sandbox.run("cat /tmp/test_file.txt")
+    stdout, stderr = await run_collect(sandbox, "cat /tmp/test_file.txt")
     assert b"test content" in stdout, f"Expected 'test content' in stdout, got {stdout} with stderr {stderr}"
     assert stderr == b""
     
@@ -279,10 +279,10 @@ with open('/tmp/python_test.txt', 'r') as f:
     assert stderr == b""
     
     # Test multiple files in /tmp
-    stdout, stderr = await sandbox.run("echo 'file1' > /tmp/file1.txt && echo 'file2' > /tmp/file2.txt")
+    stdout, stderr = await run_collect(sandbox, "echo 'file1' > /tmp/file1.txt && echo 'file2' > /tmp/file2.txt")
     assert stdout == b""
     assert stderr == b""
     
-    stdout, stderr = await sandbox.run("cat /tmp/file1.txt /tmp/file2.txt")
+    stdout, stderr = await run_collect(sandbox, "cat /tmp/file1.txt /tmp/file2.txt")
     assert b"file1" in stdout
     assert b"file2" in stdout

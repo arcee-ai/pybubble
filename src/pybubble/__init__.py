@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from importlib import metadata
 
+from .process import SandboxedProcess
 from .sandbox import Sandbox
 
-__all__ = ["__version__", "Sandbox"]
+__all__ = ["__version__", "Sandbox", "SandboxedProcess"]
 
 try:  # pragma: no cover - exercised when installed
     __version__ = metadata.version("pybubble")

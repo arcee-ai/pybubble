@@ -3,6 +3,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 
+from pybubble.process import SandboxedProcess
 from pybubble.rootfs import setup_rootfs
 
 def is_system_compatible() -> bool:
@@ -57,14 +58,58 @@ class Sandbox:
         
         self.rootfs_dir = setup_rootfs(str(rootfs), rootfs_path_obj)
 
-    async def run(self, command: str, allow_network: bool = False, timeout: float = 10.0) -> tuple[bytes, bytes]:
-        """Runs a shell command in the sandbox. Returns (stdout, stderr) if the command succeeds, otherwise raises an exception.
+    async def run(
+        self,
+        command: str,
+        allow_network: bool = False,
+        timeout: float | None = 10.0,
+        stdin_pipe: bool = True,
+        stdout_pipe: bool = True,
+        stderr_pipe: bool = True,
+    ) -> SandboxedProcess:
+        """Runs a shell command in the sandbox. Returns a SandboxedProcess for streaming or awaiting completion.
         
         Args:
             command: Shell command to run
             allow_network: Whether to allow network access
+            timeout: Default timeout in seconds for process waits/communication
+            stdin_pipe: Whether to pipe stdin for programmatic input
+            stdout_pipe: Whether to pipe stdout for programmatic streaming
+            stderr_pipe: Whether to pipe stderr for programmatic streaming
+        """
+        process = await self._start_process(command, allow_network, stdin_pipe, stdout_pipe, stderr_pipe)
+        return SandboxedProcess(process, default_timeout=timeout)
+
+    async def run_python(self, code: str, allow_network: bool = False, timeout: float | None = 10.0) -> tuple[bytes, bytes]:
+        """Runs a Python script in the sandbox. Returns (stdout, stderr) if the code succeeds, otherwise raises an exception.
+        
+        Args:
+            code: Python code to run
+            allow_network: Whether to allow network access
             timeout: Command timeout in seconds
         """
+        
+        script_path = self.work_dir / "script.py"
+        with open(script_path, "w") as f:
+            f.write(code)
+        
+        process = await self._start_process(
+            "python script.py",
+            allow_network,
+            stdin_pipe=False,
+            stdout_pipe=True,
+            stderr_pipe=True,
+        )
+        return await SandboxedProcess(process, default_timeout=timeout).communicate()
+
+    async def _start_process(
+        self,
+        command: str,
+        allow_network: bool,
+        stdin_pipe: bool,
+        stdout_pipe: bool,
+        stderr_pipe: bool,
+    ) -> asyncio.subprocess.Process:
         built_command: list[str] = [
             "bwrap",
             "--unshare-all",
@@ -96,46 +141,12 @@ class Sandbox:
             ["bash", "-c", command]
         )
         
-        process = await asyncio.create_subprocess_exec(
+        return await asyncio.create_subprocess_exec(
             *built_command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
+            stdin=subprocess.PIPE if stdin_pipe else None,
+            stdout=subprocess.PIPE if stdout_pipe else None,
+            stderr=subprocess.PIPE if stderr_pipe else None,
         )
-        
-        try:
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(),
-                timeout=timeout
-            )
-        except asyncio.TimeoutError:
-            process.kill()
-            await process.wait()
-            raise TimeoutError(f"Command execution exceeded {timeout} seconds")
-        
-        stdout = stdout or b""
-        stderr = stderr or b""
-        if process.returncode != 0:
-            raise RuntimeError(
-                f"Command failed with exit code {process.returncode}",
-                stdout,
-                stderr,
-            )
-        return stdout, stderr
-
-    async def run_python(self, code: str, allow_network: bool = False, timeout: float = 10.0) -> tuple[bytes, bytes]:
-        """Runs a Python script in the sandbox. Returns (stdout, stderr) if the code succeeds, otherwise raises an exception.
-        
-        Args:
-            code: Python code to run
-            allow_network: Whether to allow network access
-            timeout: Command timeout in seconds
-        """
-        
-        script_path = self.work_dir / "script.py"
-        with open(script_path, "w") as f:
-            f.write(code)
-        
-        return await self.run("python script.py", allow_network, timeout)
 
     def __del__(self):
         """Cleanup the sandbox work directory if it's temporary."""
