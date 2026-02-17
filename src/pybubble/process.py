@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import fcntl
+import os
+import struct
+import termios as _termios_mod
 from collections.abc import AsyncIterator, Awaitable
 from typing import Literal
 
@@ -11,9 +15,15 @@ StreamName = Literal["stdout", "stderr"]
 class SandboxedProcess:
     """Wrapper around an asyncio subprocess with streaming helpers."""
 
-    def __init__(self, process: asyncio.subprocess.Process, default_timeout: float | None = None):
+    def __init__(
+        self,
+        process: asyncio.subprocess.Process,
+        default_timeout: float | None = None,
+        master_fd: int | None = None,
+    ):
         self._process = process
         self._default_timeout = default_timeout
+        self._master_fd = master_fd
 
     @property
     def pid(self) -> int | None:
@@ -39,8 +49,32 @@ class SandboxedProcess:
     def raw(self) -> asyncio.subprocess.Process:
         return self._process
 
+    @property
+    def master_fd(self) -> int | None:
+        """The PTY master file descriptor, or None if not in PTY mode."""
+        return self._master_fd
+
+    def set_terminal_size(self, rows: int, cols: int) -> None:
+        """Set the PTY terminal dimensions (rows x cols)."""
+        if self._master_fd is None:
+            raise RuntimeError("PTY mode is not enabled")
+        size = struct.pack("HHHH", rows, cols, 0, 0)
+        fcntl.ioctl(self._master_fd, _termios_mod.TIOCSWINSZ, size)
+
+    def close_pty(self) -> None:
+        """Close the PTY master fd.  Safe to call multiple times."""
+        if self._master_fd is not None:
+            try:
+                os.close(self._master_fd)
+            except OSError:
+                pass
+            self._master_fd = None
+
     async def send(self, data: bytes) -> None:
-        """Send raw bytes to stdin."""
+        """Send raw bytes to stdin (or the PTY master when in PTY mode)."""
+        if self._master_fd is not None:
+            os.write(self._master_fd, data)
+            return
         if self._process.stdin is None:
             raise RuntimeError("stdin is not available for this process")
         self._process.stdin.write(data)
@@ -84,6 +118,43 @@ class SandboxedProcess:
             )
         return stdout, stderr
 
+    def _format_chunk(
+        self,
+        name: StreamName,
+        data: bytes,
+        decode: bool | str,
+        include_stream: bool,
+    ) -> bytes | str | tuple[StreamName, bytes] | tuple[StreamName, str]:
+        if decode:
+            enc = decode if isinstance(decode, str) else "utf-8"
+            payload: bytes | str = data.decode(enc, errors="replace")
+        else:
+            payload = data
+        return (name, payload) if include_stream else payload
+
+    async def _pty_chunks(self, chunk_size: int) -> AsyncIterator[bytes]:
+        """Yield raw byte chunks from the PTY master fd."""
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        os.set_blocking(self._master_fd, False)
+
+        def _on_readable() -> None:
+            try:
+                data = os.read(self._master_fd, chunk_size)
+                queue.put_nowait(data if data else None)
+            except OSError:
+                queue.put_nowait(None)
+
+        loop.add_reader(self._master_fd, _on_readable)
+        try:
+            while True:
+                chunk = await queue.get()
+                if chunk is None:
+                    break
+                yield chunk
+        finally:
+            loop.remove_reader(self._master_fd)
+
     async def stream(
         self,
         *,
@@ -91,11 +162,17 @@ class SandboxedProcess:
         decode: bool | str = False,
         chunk_size: int = 4096,
     ) -> AsyncIterator[bytes | str | tuple[StreamName, bytes] | tuple[StreamName, str]]:
-        """Yield interleaved output from stdout/stderr.
+        """Yield interleaved output from stdout/stderr (or the PTY).
 
         If include_stream is True, yields (stream_name, chunk).
         If decode is True or a string, decodes bytes with the given encoding.
+        In PTY mode the stream name is always ``"stdout"``.
         """
+        if self._master_fd is not None:
+            async for chunk in self._pty_chunks(chunk_size):
+                yield self._format_chunk("stdout", chunk, decode, include_stream)
+            return
+
         stdout = self._process.stdout
         stderr = self._process.stderr
         if stdout is None and stderr is None:
@@ -104,9 +181,9 @@ class SandboxedProcess:
         queue: asyncio.Queue[tuple[StreamName, bytes | None]] = asyncio.Queue()
         tasks: list[asyncio.Task[None]] = []
 
-        async def _reader(stream: asyncio.StreamReader, name: StreamName) -> None:
+        async def _reader(stream_obj: asyncio.StreamReader, name: StreamName) -> None:
             while True:
-                data = await stream.read(chunk_size)
+                data = await stream_obj.read(chunk_size)
                 if not data:
                     break
                 await queue.put((name, data))
@@ -124,17 +201,7 @@ class SandboxedProcess:
                 if data is None:
                     finished += 1
                     continue
-
-                if decode:
-                    encoding = decode if isinstance(decode, str) else "utf-8"
-                    payload: bytes | str = data.decode(encoding, errors="replace")
-                else:
-                    payload = data
-
-                if include_stream:
-                    yield name, payload
-                else:
-                    yield payload
+                yield self._format_chunk(name, data, decode, include_stream)
         finally:
             for task in tasks:
                 task.cancel()
@@ -147,12 +214,24 @@ class SandboxedProcess:
         include_stream: bool = False,
         decode: bool | str = True,
     ) -> AsyncIterator[bytes | str | tuple[StreamName, bytes] | tuple[StreamName, str]]:
-        """Yield interleaved lines from stdout/stderr.
+        """Yield interleaved lines from stdout/stderr (or the PTY).
 
         Lines include trailing newlines when present.
         If include_stream is True, yields (stream_name, line).
         If decode is True or a string, decodes bytes with the given encoding.
+        In PTY mode the stream name is always ``"stdout"``.
         """
+        if self._master_fd is not None:
+            buf = b""
+            async for chunk in self._pty_chunks(4096):
+                buf += chunk
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    yield self._format_chunk("stdout", line + b"\n", decode, include_stream)
+            if buf:
+                yield self._format_chunk("stdout", buf, decode, include_stream)
+            return
+
         stdout = self._process.stdout
         stderr = self._process.stderr
         if stdout is None and stderr is None:
@@ -161,9 +240,9 @@ class SandboxedProcess:
         queue: asyncio.Queue[tuple[StreamName, bytes | None]] = asyncio.Queue()
         tasks: list[asyncio.Task[None]] = []
 
-        async def _reader(stream: asyncio.StreamReader, name: StreamName) -> None:
+        async def _reader(stream_obj: asyncio.StreamReader, name: StreamName) -> None:
             while True:
-                line = await stream.readline()
+                line = await stream_obj.readline()
                 if not line:
                     break
                 await queue.put((name, line))
@@ -181,17 +260,7 @@ class SandboxedProcess:
                 if data is None:
                     finished += 1
                     continue
-
-                if decode:
-                    encoding = decode if isinstance(decode, str) else "utf-8"
-                    payload: bytes | str = data.decode(encoding, errors="replace")
-                else:
-                    payload = data
-
-                if include_stream:
-                    yield name, payload
-                else:
-                    yield payload
+                yield self._format_chunk(name, data, decode, include_stream)
         finally:
             for task in tasks:
                 task.cancel()

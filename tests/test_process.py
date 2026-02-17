@@ -5,44 +5,86 @@ from pybubble import Sandbox
 
 @pytest.mark.asyncio
 async def test_process_streams_stdout_stderr(default_rootfs):
-    sandbox = Sandbox(rootfs=str(default_rootfs))
-    process = await sandbox.run("bash -c 'printf out; printf err 1>&2'")
+    with Sandbox(rootfs=str(default_rootfs)) as sandbox:
+        process = await sandbox.run("bash -c 'printf out; printf err 1>&2'")
 
-    stdout_chunks = []
-    stderr_chunks = []
-    async for stream_name, chunk in process.stream(include_stream=True):
-        if stream_name == "stdout":
-            stdout_chunks.append(chunk)
-        else:
-            stderr_chunks.append(chunk)
+        stdout_chunks = []
+        stderr_chunks = []
+        async for stream_name, chunk in process.stream(include_stream=True):
+            if stream_name == "stdout":
+                stdout_chunks.append(chunk)
+            else:
+                stderr_chunks.append(chunk)
 
-    await process.wait(check=True)
-    assert b"".join(stdout_chunks) == b"out"
-    assert b"".join(stderr_chunks) == b"err"
+        await process.wait(check=True)
+        assert b"".join(stdout_chunks) == b"out"
+        assert b"".join(stderr_chunks) == b"err"
 
 
 @pytest.mark.asyncio
 async def test_process_send_text_stdin(default_rootfs):
-    sandbox = Sandbox(rootfs=str(default_rootfs))
-    process = await sandbox.run("cat")
+    with Sandbox(rootfs=str(default_rootfs)) as sandbox:
+        process = await sandbox.run("cat")
 
-    await process.send_text("hello\n")
-    process.close_stdin()
+        await process.send_text("hello\n")
+        process.close_stdin()
 
-    stdout, stderr = await process.communicate()
-    assert stdout == b"hello\n"
-    assert stderr == b""
+        stdout, stderr = await process.communicate()
+        assert stdout == b"hello\n"
+        assert stderr == b""
 
 
 @pytest.mark.asyncio
 async def test_process_streams_lines(default_rootfs):
-    sandbox = Sandbox(rootfs=str(default_rootfs))
-    process = await sandbox.run("bash -c 'printf \"line1\\nline2\\n\"'")
+    with Sandbox(rootfs=str(default_rootfs)) as sandbox:
+        process = await sandbox.run("bash -c 'printf \"line1\\nline2\\n\"'")
 
-    lines = []
-    async for line in process.stream_lines():
-        lines.append(line)
+        lines = []
+        async for line in process.stream_lines():
+            lines.append(line)
 
-    await process.wait(check=True)
+        await process.wait(check=True)
+        assert lines == ["line1\n", "line2\n"]
 
-    assert lines == ["line1\n", "line2\n"]
+
+@pytest.mark.asyncio
+async def test_process_stream_decode(default_rootfs):
+    """stream(decode=True) should yield decoded strings."""
+    with Sandbox(rootfs=str(default_rootfs)) as sandbox:
+        process = await sandbox.run("echo piped-decode")
+
+        chunks: list[str] = []
+        async for chunk in process.stream(decode=True):
+            chunks.append(chunk)
+
+        await process.wait(check=True)
+        assert "piped-decode" in "".join(chunks)
+
+
+@pytest.mark.asyncio
+async def test_process_communicate(default_rootfs):
+    """communicate() should collect stdout and stderr in one call."""
+    with Sandbox(rootfs=str(default_rootfs)) as sandbox:
+        process = await sandbox.run("bash -c 'echo out; echo err >&2'")
+        stdout, stderr = await process.communicate()
+        assert b"out" in stdout
+        assert b"err" in stderr
+
+
+@pytest.mark.asyncio
+async def test_process_wait_check_raises(default_rootfs):
+    """wait(check=True) should raise on non-zero exit."""
+    with Sandbox(rootfs=str(default_rootfs)) as sandbox:
+        process = await sandbox.run("bash -c 'exit 42'")
+        with pytest.raises(RuntimeError):
+            await process.wait(check=True)
+
+
+@pytest.mark.asyncio
+async def test_process_kill(default_rootfs):
+    """kill() should terminate the running process."""
+    with Sandbox(rootfs=str(default_rootfs)) as sandbox:
+        process = await sandbox.run("sleep 300")
+        process.kill()
+        code = await process.wait(timeout=5.0)
+        assert code != 0

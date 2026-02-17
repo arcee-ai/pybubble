@@ -4,22 +4,24 @@ from pathlib import Path
 import pytest
 
 from pybubble.rootfs import generate_rootfs
+from pybubble.sandbox import _BUNDLED_ROOTFS
 
 
 def ensure_default_exists() -> Path:
     """
-    Ensures that a rootfs called `default.tgz` exists.
-    If not, builds it from the default-rootfs.dockerfile in the project root.
-    
-    Returns:
-        Path to the default.tgz file.
+    Return a path to a usable default rootfs tarball.
+
+    Prefers the bundled ``data/default.tgz`` that ships inside the wheel.
+    Falls back to ``default.tgz`` in the project root (building it from
+    ``default-rootfs.dockerfile`` if necessary).
     """
-    # Get project root (parent of tests directory)
+    if _BUNDLED_ROOTFS.exists():
+        return _BUNDLED_ROOTFS
+
     project_root = Path(__file__).parent.parent
     default_tgz = project_root / "default.tgz"
     dockerfile = project_root / "default-rootfs.dockerfile"
-    
-    # If default.tgz doesn't exist, build it
+
     if not default_tgz.exists():
         if not dockerfile.exists():
             raise FileNotFoundError(
@@ -27,7 +29,7 @@ def ensure_default_exists() -> Path:
                 "Cannot build default.tgz."
             )
         generate_rootfs(dockerfile, default_tgz)
-    
+
     return default_tgz
 
 

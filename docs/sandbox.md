@@ -1,35 +1,86 @@
 # Sandboxes
 
-Sandbox objects are a reference to an unpacked root filesystem (stored, usually, in `~/.cache/pybubble/rootfs/{hash_of_rootfs_archive}/` and reused between environments) and a writable session directory, usually stored in a uniquely-named directory in `/tmp`.
+Sandbox objects manage an unpacked root filesystem (stored, usually, in `~/.cache/pybubble/rootfs/{hash_of_rootfs_archive}/` and reused between environments) and a writable session directory, usually stored in a uniquely-named directory in `/tmp`.
 
-Unless you pass `work_dir` to the constructor, the session directory will be automatically deleted as soon as the Sandbox goes out of scope or is deleted with the `del` keyword. The directory bound to `/tmp` will always be deleted when a sandbox goes out of scope.
+Unless you pass `work_dir` to the constructor, the session directory will be automatically deleted when the Sandbox is closed or goes out of scope. The directory bound to `/tmp` will always be deleted when a sandbox is closed.
 
-Programs running in the sandbox see a read-only root filesystem and a writable partition at `/home/sandbox`, which is also the default working directory. The sandbox inherits the hostname of the host system, as well as a read-only copy of `/etc/resolv.conf` for DNS resolution when `allow_network=True` is passed to `run()` or `run_python()`. A separate writable directory is used under the host's `/tmp` for the sandbox's `/tmp`.
+Programs running in the sandbox see a read-only root filesystem (unless an overlay is enabled) and a writable partition at `/home/sandbox`, which is also the default working directory. When `allow_network=True` is passed to `run()` or `run_script()`, a read-only copy of `/etc/resolv.conf` is mounted for DNS resolution. A separate writable directory is used under the host's `/tmp` for the sandbox's `/tmp`.
 
-## API
+The sandbox runs with its own hostname (`sandbox`), its own PID namespace, and an isolated user namespace.
 
-`def __init__(self, rootfs: str | Path, work_dir: str | Path | None = None, rootfs_path: str | Path | None = None)`
+## Context manager
+
+`Sandbox` implements the context manager protocol.  This is the recommended way to use it, especially when overlay filesystems are enabled, since `close()` must run to unmount the FUSE overlay.
+
+```python
+async with Sandbox() as sbox:
+    proc = await sbox.run("echo hello")
+    stdout, stderr = await proc.communicate()
+# overlay unmounted, temp dirs cleaned up
+```
+
+You can also call `close()` manually:
+
+```python
+sbox = Sandbox()
+# ... use the sandbox ...
+sbox.close()
+```
+
+## Constructor
+
+```python
+def __init__(
+    self,
+    rootfs: str | Path | None = None,
+    work_dir: str | Path | None = None,
+    rootfs_path: str | Path | None = None,
+    rootfs_overlay: bool = False,
+    rootfs_overlay_path: str | Path | None = None,
+    persist_overlayfs: bool = False,
+)
+```
 
 Creates a sandbox from the specified `rootfs` tarball, expected to be in the form of a tarball or compressed tarball.
 
-If `work_dir` is specified, the writable working directory for the sandbox will be stored at that location and will not be deleted when the sandbox goes out of scope. Otherwise, a temporary directory in `/tmp` will be used.
+| Parameter | Description |
+|---|---|
+| `rootfs` | Path to a rootfs tarball. When `None` (the default), the bundled `default.tgz` that ships with the wheel is used. |
+| `work_dir` | Writable working directory for sandbox sessions, mounted at `/home/sandbox`. If `None`, a temporary directory in `/tmp` is used and deleted on close. |
+| `rootfs_path` | Directory to extract the rootfs tarball into. If `None`, a hash-based cache under `~/.cache/pybubble/rootfs/` is used, so identical tarballs share one extraction. |
+| `rootfs_overlay` | When `True`, mount a `fuse-overlayfs` layer on top of the read-only rootfs so the sandbox can write to `/usr`, `/etc`, etc. Requires `fuse-overlayfs` to be installed. |
+| `rootfs_overlay_path` | Directory for the overlay `upper/`, `work/`, and `mount/` subdirectories. If `None`, a temporary directory in `/tmp` is used. |
+| `persist_overlayfs` | When `True`, the overlay is **not** unmounted on close — useful for exporting the modified filesystem. Requires `rootfs_overlay_path` to be set. |
 
-If `rootfs_path` is provided, the root filesystem tarball will be extracted to that directory. Otherwise, it will be extracted to `~/.cache/pybubble/rootfs/{hash}`. If a directory already exists at the path, extraction will be skipped and the cached filesystem will be reused.
+## `run()`
 
----
+```python
+async def run(
+    self,
+    command: str,
+    allow_network: bool = False,
+    timeout: float | None = 10.0,
+    stdin_pipe: bool = True,
+    stdout_pipe: bool = True,
+    stderr_pipe: bool = True,
+    use_pty: bool = False,
+) -> SandboxedProcess
+```
 
-`async def run(self, command: str, allow_network: bool = False, timeout: float = 10.0, stdin_pipe: bool = True, stdout_pipe: bool = True, stderr_pipe: bool = True) -> SandboxedProcess`
+Runs a shell command in the sandbox asynchronously and returns a `SandboxedProcess`.
 
-Runs a given shell command in a sandbox. The command is run asynchronously.
+| Parameter | Description |
+|---|---|
+| `command` | Shell command to run (passed to `bash -c`). |
+| `allow_network` | Grant network access and mount the host's `/etc/resolv.conf` for DNS. |
+| `timeout` | Default timeout (in seconds) used by `SandboxedProcess.wait()` and `communicate()`. `None` means no timeout. |
+| `stdin_pipe` | Pipe stdin for programmatic input via `send()` / `send_text()`. Ignored when `use_pty` is `True`. |
+| `stdout_pipe` / `stderr_pipe` | Pipe stdout/stderr for programmatic streaming. Ignored when `use_pty` is `True`. |
+| `use_pty` | Allocate a pseudoterminal for the child process. The returned `SandboxedProcess` exposes the master fd via `master_fd` and supports `set_terminal_size()`. Ctrl+C, colors, curses apps, and job control all work in PTY mode. |
 
-If `allow_network` is True, network access is granted to the process and the host's `/etc/resolv.conf` is mounted read-only to the sandbox for DNS resolution.
+### Pipe mode (default)
 
-The argument `timeout` sets the default timeout (in seconds) used by `SandboxedProcess.wait()` and `SandboxedProcess.communicate()`, which raise `TimeoutError` if the process takes longer than that.
-
-If `stdin_pipe` is True, stdin is piped so you can call `SandboxedProcess.send()` / `send_text()`. If False, stdin is inherited from the parent process.
-If `stdout_pipe` or `stderr_pipe` are False, those streams are inherited from the parent process instead of being available for programmatic streaming.
-
-Returns a `SandboxedProcess` that you can use to stream output and send stdin. Common patterns:
+Standard mode for programmatic use. stdout and stderr are separate streams.
 
 ```python
 process = await sandbox.run("echo hello")
@@ -52,7 +103,7 @@ async for line in process.stream_lines():
 await process.wait(check=True)
 ```
 
-You can also send input:
+Sending input:
 
 ```python
 process = await sandbox.run("cat")
@@ -61,12 +112,56 @@ process.close_stdin()
 stdout, stderr = await process.communicate()
 ```
 
+### PTY mode
+
+The child gets a real pseudoterminal, so interactive programs (bash, python REPL, vim, etc.) work correctly. stdout and stderr are merged into a single stream; `stream()` and `stream_lines()` work transparently and label everything as `"stdout"`.
+
+```python
+process = await sandbox.run("bash", use_pty=True)
+
+await process.send(b"echo hello\n")
+
+async for chunk in process.stream(decode=True):
+    print(chunk, end="")
+
+process.set_terminal_size(40, 120)
+
+await process.wait()
+process.close_pty()
+```
+
+PTY mode also works without a host terminal attached (e.g., in a web server or CI), and can be paired with a virtual terminal emulator like [pyte](https://github.com/selectel/pyte) for headless terminal rendering.
+
 ---
 
-`async def run_python(self, code: str, allow_network: bool = False, timeout: float = 10.0) -> tuple[bytes, bytes]`
+## `run_script()`
 
-Convenience wrapper for running Python scripts. Creates a file called `script.py` and writes the value of `code` to it, and then runs `python script.py`. Returns `(stdout, stderr)` like the old `run()` behavior.
+```python
+async def run_script(
+    self,
+    code: str,
+    allow_network: bool = False,
+    timeout: float | None = 10.0,
+    run_command: str = "python",
+    extension: str = "py",
+) -> SandboxedProcess
+```
 
-## Accessing the session data
+Writes `code` to a temporary file and runs it with `run_command`. Defaults to Python.
 
-The writable portion of the sandbox's filesystem can be accessed from the host with the Path object stored at `Sandbox.work_dir`. Changes made to this directory made by the host will be visible instantly in the sandbox, and vice versa. You can use this to access files created by the sandboxed code or place files in the session directory for the sandboxed code to access.
+```python
+stdout, stderr = await (await sandbox.run_script("print('hi')")).communicate()
+```
+
+## Accessing session data
+
+The writable portion of the sandbox's filesystem can be accessed from the host via the `Path` at `Sandbox.work_dir`. Changes made by the host are visible instantly inside the sandbox, and vice versa.
+
+```python
+# Write a file from the host
+(sandbox.work_dir / "input.txt").write_text("data")
+
+# Read it from inside the sandbox
+proc = await sandbox.run("cat input.txt")
+stdout, _ = await proc.communicate()
+```

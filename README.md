@@ -16,6 +16,12 @@ Install `bwrap`. On Ubuntu, do:
 sudo apt-get install bubblewrap
 ```
 
+Optionally, for overlay filesystem support (writable rootfs without modifying the original):
+
+```bash
+sudo apt-get install fuse-overlayfs
+```
+
 Then, add `pybubble` to your project.
 
 ```bash
@@ -46,20 +52,61 @@ from pybubble import Sandbox
 import asyncio
 
 async def main():
-    sbox = Sandbox()
+    with Sandbox() as sbox:
+        process = await sbox.run("ping -c 1 google.com", allow_network=True)
+        stdout, stderr = await process.communicate()
+        print(stdout.decode())
 
-    process = await sbox.run("ping -c 1 google.com", allow_network=True)
-    stdout, stderr = await process.communicate()
-
-    print(stdout.decode("utf-8")) # ping output
-
-    process = await sbox.run_script("print('hello, world')", timeout=5.0)
-    stdout, stderr = await process.communicate()
-
-    print(stdout.decode("utf-8")) # "hello, world"
+        process = await sbox.run_script("print('hello, world')", timeout=5.0)
+        stdout, stderr = await process.communicate()
+        print(stdout.decode())
 
 if __name__ == "__main__":
     asyncio.run(main())
+```
+
+## PTY mode
+
+For interactive programs, pass `use_pty=True` to get a real pseudoterminal. Ctrl+C, colors, job control, and curses apps all work.
+
+```python
+async def main():
+    with Sandbox() as sbox:
+        proc = await sbox.run("bash", use_pty=True)
+        await proc.send(b"echo hello\n")
+
+        async for chunk in proc.stream(decode=True):
+            print(chunk, end="")
+
+        await proc.wait()
+        proc.close_pty()
+```
+
+## Overlay filesystem
+
+With `fuse-overlayfs` installed, you can make the rootfs writable without modifying the cached original:
+
+```python
+with Sandbox(rootfs_overlay=True) as sbox:
+    proc = await sbox.run("apk add git", allow_network=True)
+    await proc.communicate()
+```
+
+## Use the CLI
+
+You can also run programs interactively via the CLI.
+
+```bash
+uv run pybubble run bash
+sandbox:~$ echo "Hello, world!"
+Hello, world!
+```
+
+With an overlay filesystem:
+
+```bash
+uv run pybubble run --rootfs-overlay bash
+sandbox:~$ apk add nodejs
 ```
 
 To learn more about the features available in `Sandbox`, see [this page](docs/sandbox.md).

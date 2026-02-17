@@ -1,62 +1,135 @@
 #!/usr/bin/env python3
 """CLI interface for pybubble - run code in sandboxes or generate rootfs files from dockerfiles."""
 
+import tarfile
 import argparse
 import asyncio
+import fcntl
 import os
+import signal
 import shutil
 import sys
 import termios
+import tty
 from pathlib import Path
 
+from pybubble.process import SandboxedProcess
 from pybubble.rootfs import generate_rootfs
 from pybubble.sandbox import Sandbox
+
+
+async def _proxy_pty(process: SandboxedProcess) -> int:
+    """Bidirectional proxy between the real terminal and the sandbox PTY.
+
+    Puts the host terminal in raw mode, shuttles bytes in both directions,
+    and forwards window-resize events.  Returns the child exit code.
+    """
+    loop = asyncio.get_running_loop()
+    master_fd = process.master_fd
+    assert master_fd is not None
+
+    stdin_fd = sys.stdin.fileno()
+    stdout_fd = sys.stdout.fileno()
+
+    os.set_blocking(master_fd, False)
+
+    def _on_master_output() -> None:
+        try:
+            data = os.read(master_fd, 4096)
+            if data:
+                os.write(stdout_fd, data)
+        except OSError:
+            pass
+
+    def _on_stdin_input() -> None:
+        try:
+            data = os.read(stdin_fd, 4096)
+            if data:
+                os.write(master_fd, data)
+        except OSError:
+            pass
+
+    def _on_resize() -> None:
+        try:
+            size = fcntl.ioctl(stdin_fd, termios.TIOCGWINSZ, b"\x00" * 8)
+            fcntl.ioctl(master_fd, termios.TIOCSWINSZ, size)
+        except OSError:
+            pass
+
+    loop.add_reader(master_fd, _on_master_output)
+    loop.add_reader(stdin_fd, _on_stdin_input)
+    loop.add_signal_handler(signal.SIGWINCH, _on_resize)
+
+    try:
+        returncode = await process.wait(timeout=None)
+        # Let the event loop flush any remaining PTY output.
+        await asyncio.sleep(0.05)
+    finally:
+        loop.remove_reader(master_fd)
+        loop.remove_reader(stdin_fd)
+        loop.remove_signal_handler(signal.SIGWINCH)
+        # Drain anything left in the PTY buffer after readers are removed.
+        try:
+            while True:
+                leftover = os.read(master_fd, 4096)
+                if not leftover:
+                    break
+                os.write(stdout_fd, leftover)
+        except OSError:
+            pass
+        process.close_pty()
+
+    return returncode
 
 
 def cmd_run(args):
     """Run a command in a sandbox."""
     async def _run():
-        sandbox = Sandbox(
-            work_dir=args.work_dir,
-            rootfs=args.rootfs,
-            rootfs_path=args.rootfs_path,
-            user=args.user,
-            mutable_rootfs=args.mutable_rootfs,
-        )
-        
-        # Join the command parts back together
         if not args.cmd:
             print("Error: No command provided", file=sys.stderr)
             return 1
         cmd_str = " ".join(args.cmd)
-        
-        # Save terminal state so we can restore it after the child exits,
-        # even if the sandboxed process (e.g. bash) changed raw mode / echo.
-        tty_fd = sys.stdin.fileno() if sys.stdin.isatty() else None
+
+        interactive = sys.stdin.isatty()
+        tty_fd = sys.stdin.fileno() if interactive else None
         saved_attrs = termios.tcgetattr(tty_fd) if tty_fd is not None else None
+        
+        if args.persist_overlayfs and not args.rootfs_overlay:
+            print("Error: --persist-overlayfs can only be used when --rootfs-overlay is enabled", file=sys.stderr)
+            return 1
 
-        try:
-            process = await sandbox.run(
-                cmd_str,
-                allow_network=not args.no_network,
-                timeout=args.timeout,
-                stdin_pipe=False,
-                stdout_pipe=False,
-                stderr_pipe=False,
-            )
+        with Sandbox(
+            work_dir=args.work_dir,
+            rootfs=args.rootfs,
+            rootfs_path=args.rootfs_path,
+            rootfs_overlay=args.rootfs_overlay,
+            rootfs_overlay_path=args.rootfs_overlay_path,
+            persist_overlayfs=args.persist_overlayfs,
+        ) as sandbox:
+            try:
+                process = await sandbox.run(
+                    cmd_str,
+                    allow_network=not args.no_network,
+                    timeout=args.timeout,
+                    stdin_pipe=not interactive,
+                    stdout_pipe=not interactive,
+                    stderr_pipe=not interactive,
+                    use_pty=interactive,
+                )
 
-            returncode = await process.wait(timeout=args.timeout)
-
-            if returncode != 0:
+                if interactive:
+                    tty.setraw(tty_fd)
+                    returncode = await _proxy_pty(process)
+                else:
+                    returncode = await process.wait(timeout=args.timeout)
+                
                 return returncode
+            except Exception as e:
+                raise RuntimeError("An error occurred while running the command") from e
+            finally:
+                if saved_attrs is not None:
+                    termios.tcsetattr(tty_fd, termios.TCSADRAIN, saved_attrs)
 
-            return 0
-        except Exception as e:
-            raise RuntimeError("An error occurred while running the command") from e
-        finally:
-            if saved_attrs is not None:
-                termios.tcsetattr(tty_fd, termios.TCSADRAIN, saved_attrs)
-    
     return asyncio.run(_run())
 
 
@@ -128,14 +201,18 @@ def main():
         help="Command timeout in seconds (default: no timeout)"
     )
     run_parser.add_argument(
-        "--user",
-        default="sandbox",
-        help="User to run the sandbox as (default: sandbox)"
+        "--rootfs-overlay",
+        action="store_true",
+        help="Allow the rootfs to be modified via overlayfs"
     )
     run_parser.add_argument(
-        "--mutable-rootfs",
+        "--rootfs-overlay-path",
+        help="Path to the overlayfs mount point"
+    )
+    run_parser.add_argument(
+        "--persist-overlayfs",
         action="store_true",
-        help="Allow the rootfs to be modified (requires --rootfs-path)"
+        help="When the process exits, do not unmount the overlayfs. You will need to manually unmount it when you are done."
     )
     run_parser.set_defaults(func=cmd_run)
     

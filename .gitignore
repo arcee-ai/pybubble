@@ -15,4 +15,4 @@ work
 
 *.tgz
 
-mutable_rootfs
+overlayfs
