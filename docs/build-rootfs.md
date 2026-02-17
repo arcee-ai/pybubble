@@ -9,9 +9,9 @@ $ uv run pybubble run --rootfs-overlay --rootfs-overlay-path ./overlayfs --persi
 sandbox:~$ apk add nodejs
 OK: 297 MiB in 131 packages
 sandbox:~$ exit
-$ tar -czvf with_node.tgz -C overlayfs/mount .
+$ tar -cf - -C overlayfs/mount . | zstd -19 -o with_node.tar.zst
 $ fusermount -u overlayfs/mount
-$ uv run pybubble run --rootfs with_node.tgz bash
+$ uv run pybubble run --rootfs with_node.tar.zst bash
 sandbox:~$ node --version
 v22.22.0
 ```
@@ -23,7 +23,7 @@ A custom root filesystem archive can be generated from any Dockerfile. Ensure yo
 To generate a root filesystem, ensure you have Docker installed and running, then run:
 
 ```bash
-$ pybubble rootfs your.dockerfile rootfs.tgz
+$ pybubble rootfs your.dockerfile rootfs.tar.zst
 ```
 
 Your root filesystem archive can now be used with sandboxes. Docker does not need to be installed to use this file, only to generate it.

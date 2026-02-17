@@ -9,7 +9,9 @@ version = "0.3.0"
 description = "A Python package for running sandboxed code."
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "zstandard>=0.25.0",
+]
 
 [project.scripts]
 pybubble = "pybubble.__cli__:main"
@@ -21,7 +23,7 @@ test = [
 ]
 
 [tool.hatch.build]
-artifacts = ["src/pybubble/data/*.tgz"]
+artifacts = ["src/pybubble/data/*.tar.zst"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pybubble"]

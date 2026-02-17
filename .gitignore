@@ -13,6 +13,7 @@ work
 
 .pytest_cache
 
+*.tar.zst
 *.tgz
 
 overlayfs

@@ -30,59 +30,74 @@ def _get_cache_dir() -> Path:
 
 
 def _safe_extractall(tar: tarfile.TarFile, path: Path) -> None:
-    """Extract tar contents while preventing path traversal."""
-    for member in tar.getmembers():
+    """Extract tar contents while preventing path traversal.
+
+    Works in a single pass so it is compatible with streaming tarfiles
+    (e.g. ``tarfile.open(fileobj=..., mode="r|")``) where you cannot
+    seek back after reading members.
+    """
+    for member in tar:
         member_path = Path(member.name)
         if member_path.is_absolute() or ".." in member_path.parts:
             raise RuntimeError(f"Unsafe path in tarball: {member.name}")
-    tar.extractall(path)
+        tar.extract(member, path, filter="fully_trusted")
+
+
+def _open_tarball(tarball_path: Path) -> tarfile.TarFile:
+    """Open a tarball, transparently handling gzip, xz, bzip2, and zstd."""
+    name = tarball_path.name
+    if name.endswith(".tar.zst") or name.endswith(".zst"):
+        import zstandard
+        dctx = zstandard.ZstdDecompressor()
+        fh = open(tarball_path, "rb")
+        stream = dctx.stream_reader(fh)
+        return tarfile.open(fileobj=stream, mode="r|")
+    return tarfile.open(tarball_path, "r:*")
 
 
 def setup_rootfs(rootfs: str, rootfs_path: Path | None = None) -> Path:
     """Sets up a reusable rootfs from a specified image tarball (local file only).
     
     Args:
-        rootfs: Path to rootfs tarball (local file)
+        rootfs: Path to rootfs tarball (local file). Supports .tar.zst, .tgz,
+            .tar.gz, .tar.bz2, and .tar.xz.
         rootfs_path: Optional specific path to extract rootfs. If None, uses cache based on tarball hash.
     
     Returns:
         Path to the extracted rootfs directory.
     """
-    # Local file path
     tarball_path = Path(rootfs)
     if not tarball_path.exists():
         raise FileNotFoundError(f"Rootfs tarball not found: {rootfs}")
     
-    # Determine if we should use cache or specific path
     if rootfs_path is None:
-        # Use cache based on tarball hash
         tarball_hash = _compute_tarball_hash(tarball_path)
-        # Use hash-based cache directory
         rootfs_dir = _get_cache_dir() / tarball_hash
     else:
-        # Use specific path provided by user
         rootfs_dir = Path(rootfs_path)
     
-    # Check if rootfs directory already exists (cached)
     if rootfs_dir.exists():
         return rootfs_dir
     
-    # Extract the tarball to the rootfs directory
     try:
-        # Create rootfs directory if it doesn't exist
         rootfs_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Extract the tarball
-        with tarfile.open(tarball_path, "r:*") as tar:
+        with _open_tarball(tarball_path) as tar:
             _safe_extractall(tar, rootfs_dir)
     except Exception as e:
         raise RuntimeError(f"Failed to extract rootfs tarball: {e}") from e
     
     return rootfs_dir
 
-def generate_rootfs(dockerfile: Path, output_file: Path, compress_level: int = 6) -> None:
-    """Generates a rootfs from a Dockerfile. Docker must be installed for this to work."""
+
+def generate_rootfs(dockerfile: Path, output_file: Path, compress_level: int = 19) -> None:
+    """Generates a rootfs from a Dockerfile. Docker must be installed for this to work.
+
+    The output is a zstd-compressed tarball (.tar.zst).
+    """
     subprocess.run(["docker", "rm", "-f", "pybubble_rootfs"], check=False)
     subprocess.run(["docker", "build", "-t", "pybubble_rootfs", "-f", dockerfile, "."], check=True)
     subprocess.run(["docker", "create", "--name", "pybubble_rootfs", "pybubble_rootfs"], check=True)
-    subprocess.run(["bash", "-c", f"docker export pybubble_rootfs | gzip -{compress_level} > {output_file}"], check=True)
+    subprocess.run(
+        ["bash", "-c", f"docker export pybubble_rootfs | zstd -{compress_level} -o {output_file}"],
+        check=True,
+    )

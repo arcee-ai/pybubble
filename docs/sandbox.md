@@ -45,7 +45,7 @@ Creates a sandbox from the specified `rootfs` tarball, expected to be in the for
 
 | Parameter | Description |
 |---|---|
-| `rootfs` | Path to a rootfs tarball. When `None` (the default), the bundled `default.tgz` that ships with the wheel is used. |
+| `rootfs` | Path to a rootfs tarball. When `None` (the default), the bundled `default.tar.zst` that ships with the wheel is used. Supports `.tar.zst`, `.tgz`, `.tar.gz`, `.tar.bz2`, and `.tar.xz`. |
 | `work_dir` | Writable working directory for sandbox sessions, mounted at `/home/sandbox`. If `None`, a temporary directory in `/tmp` is used and deleted on close. |
 | `rootfs_path` | Directory to extract the rootfs tarball into. If `None`, a hash-based cache under `~/.cache/pybubble/rootfs/` is used, so identical tarballs share one extraction. |
 | `rootfs_overlay` | When `True`, mount a `fuse-overlayfs` layer on top of the read-only rootfs so the sandbox can write to `/usr`, `/etc`, etc. Requires `fuse-overlayfs` to be installed. |

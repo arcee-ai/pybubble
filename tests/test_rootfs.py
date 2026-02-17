@@ -207,7 +207,7 @@ def test_setup_rootfs_specific_path_bypasses_cache(temp_work_dir, sample_tarball
 def test_generate_rootfs():
     """Test that generate_rootfs creates a rootfs from a Dockerfile."""
     dockerfile = Path("tests/test_dockerfile.dockerfile")
-    output_file = Path("tests/test_rootfs.tar.gz")
+    output_file = Path("tests/test_rootfs.tar.zst")
     generate_rootfs(dockerfile, output_file)
     
     assert output_file.exists()

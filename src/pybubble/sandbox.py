@@ -14,7 +14,7 @@ from pybubble.process import SandboxedProcess
 from pybubble.rootfs import setup_rootfs
 
 # Path to the bundled default rootfs tarball (ships inside the wheel)
-_BUNDLED_ROOTFS = Path(__file__).parent / "data" / "default.tgz"
+_BUNDLED_ROOTFS = Path(__file__).parent / "data" / "default.tar.zst"
 
 def is_installed(command: list[str]) -> bool:
     """Checks if a command is installed."""
@@ -70,9 +70,9 @@ class Sandbox:
         if rootfs is None:
             if not _BUNDLED_ROOTFS.exists():
                 raise FileNotFoundError(
-                    "No rootfs tarball supplied and the bundled default.tgz "
-                    "was not found.  If you are running from a source checkout, "
-                    "build the rootfs first (see README)."
+                    "No rootfs tarball was supplied and the bundled default.tar.zst "
+                    "was not found. If you are running from a source checkout, "
+                    "build the rootfs first (see docs/build-rootfs.md)."
                 )
             rootfs = _BUNDLED_ROOTFS
         

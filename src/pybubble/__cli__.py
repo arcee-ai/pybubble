@@ -232,8 +232,8 @@ def main():
     rootfs_parser.add_argument(
         "--compress-level",
         type=int,
-        default=6,
-        help="Compression level for the generated rootfs tarball (default: 6)"
+        default=19,
+        help="Zstd compression level for the generated rootfs tarball (default: 19)"
     )
     rootfs_parser.set_defaults(func=cmd_generate_rootfs)
     

@@ -15,7 +15,7 @@ from pybubble.rootfs import generate_rootfs
 
 # Location inside the package tree where the rootfs will be bundled
 _DATA_DIR = Path(__file__).parent / "src" / "pybubble" / "data"
-_DEFAULT_TGZ = _DATA_DIR / "default.tgz"
+_DEFAULT_ZST = _DATA_DIR / "default.tar.zst"
 
 
 def _ensure_default_rootfs() -> None:
@@ -25,17 +25,17 @@ def _ensure_default_rootfs() -> None:
 
     _DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-    if _DEFAULT_TGZ.exists():
-        print(f"Removing existing {_DEFAULT_TGZ}", flush=True)
-        _DEFAULT_TGZ.unlink()
+    if _DEFAULT_ZST.exists():
+        print(f"Removing existing {_DEFAULT_ZST}", flush=True)
+        _DEFAULT_ZST.unlink()
 
     print(f"Building default rootfs from {dockerfile}...", flush=True)
 
     original_cwd = os.getcwd()
     os.chdir(project_root)
     try:
-        generate_rootfs(dockerfile, _DEFAULT_TGZ, compress_level=9)
-        print(f"Default rootfs built successfully at {_DEFAULT_TGZ}!", flush=True)
+        generate_rootfs(dockerfile, _DEFAULT_ZST, compress_level=19)
+        print(f"Default rootfs built successfully at {_DEFAULT_ZST}!", flush=True)
     finally:
         os.chdir(original_cwd)
 
