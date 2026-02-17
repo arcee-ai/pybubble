@@ -1,8 +1,8 @@
 # pybubble
 
-A simple wrapper around [bubblewrap](https://github.com/containers/bubblewrap) to create sandbox environments for executing code. It works without Docker or other daemon-based container runtimes, using shared read-only root filesystems for quick (1-2ms) setup times.
+A simple wrapper around [bubblewrap](https://github.com/containers/bubblewrap) to create sandboxed environments for executing code. It works without Docker or other daemon-based container runtimes, using shared read-only root filesystems for quick (1-2ms) setup times.
 
-While these environments are sandboxed and provide protection from accidental modification of your host system by overzealous LLMs, **pybubble is not sufficient to protect you against actively malicious code**. In general, while containerization solutions like pybubble or Docker offer a reasonable degree of protection from accidental damage and unsophisticated attackers, when accepting input from the public you should consider using more robust security solutions in addition to tools like pybubble or Docker.
+While these environments are sandboxed and provide protection from accidental modification of your host system by overzealous LLMs, **pybubble is not sufficient to protect you against actively malicious code**. In general, while containerization solutions like pybubble or Docker offer a reasonable degree of protection from accidental damage, when accepting input from the public you should consider using virtualization in place of or in addition to containers.
 
 Feel free to submit bug reports and pull requests via GitHub, but note that Arcee is not committing to long-term support of this software. I wrote this library in my spare time to solve an irritating problem with building code execution environments, so expect a pace of updates consistent with "time I have while waiting for a debug run to finish".
 
@@ -24,7 +24,7 @@ uv add pybubble
 
 ## Root filesystem archives
 
-If all you need is basic Python code execution, consider using the provided root filesystem archive under our GitHub release. It comes preinstalled with:
+Prebuilt wheels for pybubble come bundled with an x86 Alpine Linux root filesystem archive based on `default-rootfs.dockerfile`. It comes with:
 
 - Python
 - uv
@@ -39,23 +39,22 @@ If all you need is basic Python code execution, consider using the provided root
 
 If you need more tools or want to run a leaner environment, follow [this guide](docs/build-rootfs.md) to build one yourself.
 
-## Run code
-
-Create a sandbox by doing:
+## Run sandboxed code
 
 ```python
 from pybubble import Sandbox
 import asyncio
 
 async def main():
-    s = Sandbox("path/to/rootfs.tgz")
+    sbox = Sandbox()
 
-    process = await s.run("ping -c 1 google.com", allow_network=True)
+    process = await sbox.run("ping -c 1 google.com", allow_network=True)
     stdout, stderr = await process.communicate()
 
     print(stdout.decode("utf-8")) # ping output
 
-    stdout, stderr = await s.run_python("print('hello, world')", timeout=5.0)
+    process = await sbox.run_script("print('hello, world')", timeout=5.0)
+    stdout, stderr = await process.communicate()
 
     print(stdout.decode("utf-8")) # "hello, world"
 

@@ -6,6 +6,7 @@ import asyncio
 import os
 import shutil
 import sys
+import termios
 from pathlib import Path
 
 from pybubble.rootfs import generate_rootfs
@@ -18,7 +19,9 @@ def cmd_run(args):
         sandbox = Sandbox(
             work_dir=args.work_dir,
             rootfs=args.rootfs,
-            rootfs_path=args.rootfs_path
+            rootfs_path=args.rootfs_path,
+            user=args.user,
+            mutable_rootfs=args.mutable_rootfs,
         )
         
         # Join the command parts back together
@@ -27,10 +30,15 @@ def cmd_run(args):
             return 1
         cmd_str = " ".join(args.cmd)
         
+        # Save terminal state so we can restore it after the child exits,
+        # even if the sandboxed process (e.g. bash) changed raw mode / echo.
+        tty_fd = sys.stdin.fileno() if sys.stdin.isatty() else None
+        saved_attrs = termios.tcgetattr(tty_fd) if tty_fd is not None else None
+
         try:
             process = await sandbox.run(
                 cmd_str,
-                allow_network=args.network,
+                allow_network=not args.no_network,
                 timeout=args.timeout,
                 stdin_pipe=False,
                 stdout_pipe=False,
@@ -38,52 +46,16 @@ def cmd_run(args):
             )
 
             returncode = await process.wait(timeout=args.timeout)
+
             if returncode != 0:
-                print(f"Error: Command failed with exit code {returncode}", file=sys.stderr)
-                return 1
+                return returncode
 
             return 0
         except Exception as e:
-            print(f"Error: {e}", file=sys.stderr)
-            return 1
-    
-    return asyncio.run(_run())
-
-
-def cmd_run_python(args):
-    """Run Python code in a sandbox."""
-    async def _run():
-        sandbox = Sandbox(
-            work_dir=args.work_dir,
-            rootfs=args.rootfs,
-            rootfs_path=args.rootfs_path
-        )
-        
-        try:
-            # Read code from file or use provided code string
-            if args.file:
-                code = Path(args.file).read_text()
-            elif args.code:
-                code = args.code
-            else:
-                # Read from stdin
-                code = sys.stdin.read()
-            
-            stdout, stderr = await sandbox.run_python(
-                code,
-                allow_network=args.network,
-                timeout=args.timeout
-            )
-            
-            if stdout:
-                sys.stdout.buffer.write(stdout)
-            if stderr:
-                sys.stderr.buffer.write(stderr)
-            
-            return 0
-        except Exception as e:
-            print(f"Error: {e}", file=sys.stderr)
-            return 1
+            raise RuntimeError("An error occurred while running the command") from e
+        finally:
+            if saved_attrs is not None:
+                termios.tcsetattr(tty_fd, termios.TCSADRAIN, saved_attrs)
     
     return asyncio.run(_run())
 
@@ -126,13 +98,14 @@ def main():
     # Run command subparser
     run_parser = subparsers.add_parser("run", help="Run a shell command in a sandbox")
     run_parser.add_argument(
-        "rootfs",
-        help="Path to rootfs tarball"
-    )
-    run_parser.add_argument(
         "cmd",
         nargs=argparse.REMAINDER,
         help="Shell command to run (use -- before command if it starts with -)"
+    )
+    run_parser.add_argument(
+        "--rootfs",
+        default=None,
+        help="Path to rootfs tarball (default: bundled rootfs)"
     )
     run_parser.add_argument(
         "--work-dir",
@@ -144,7 +117,7 @@ def main():
         help="Path to extract/cache rootfs (default: auto-generated cache path)"
     )
     run_parser.add_argument(
-        "--network",
+        "--no-network",
         action="store_true",
         help="Allow network access"
     )
@@ -154,43 +127,17 @@ def main():
         default=None,
         help="Command timeout in seconds (default: no timeout)"
     )
-    run_parser.set_defaults(func=cmd_run)
-    
-    # Run Python subparser
-    python_parser = subparsers.add_parser("python", help="Run Python code in a sandbox")
-    python_parser.add_argument(
-        "rootfs",
-        help="Path to rootfs tarball"
+    run_parser.add_argument(
+        "--user",
+        default="sandbox",
+        help="User to run the sandbox as (default: sandbox)"
     )
-    python_parser.add_argument(
-        "--code",
-        help="Python code to run (or use --file or stdin)"
-    )
-    python_parser.add_argument(
-        "--file",
-        help="Path to Python file to run"
-    )
-    python_parser.add_argument(
-        "--work-dir",
-        default="work",
-        help="Working directory for sandbox sessions (default: work)"
-    )
-    python_parser.add_argument(
-        "--rootfs-path",
-        help="Path to extract/cache rootfs (default: auto-generated cache path)"
-    )
-    python_parser.add_argument(
-        "--network",
+    run_parser.add_argument(
+        "--mutable-rootfs",
         action="store_true",
-        help="Allow network access"
+        help="Allow the rootfs to be modified (requires --rootfs-path)"
     )
-    python_parser.add_argument(
-        "--timeout",
-        type=float,
-        default=10.0,
-        help="Command timeout in seconds (default: 10.0)"
-    )
-    python_parser.set_defaults(func=cmd_run_python)
+    run_parser.set_defaults(func=cmd_run)
     
     # Generate rootfs subparser
     rootfs_parser = subparsers.add_parser(
