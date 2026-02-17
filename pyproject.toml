@@ -5,7 +5,7 @@ backend-path = ["."]
 
 [project]
 name = "pybubble"
-version = "0.2.0"
+version = "0.3.0"
 description = "A Python package for running sandboxed code."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -19,6 +19,9 @@ test = [
     "pytest>=8.0",
     "pytest-asyncio>=0.25.2",
 ]
+
+[tool.hatch.build]
+artifacts = ["src/pybubble/data/*.tgz"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pybubble"]
