@@ -247,7 +247,7 @@ def main():
     )
     run_parser.add_argument(
         "--rootfs-overlay-path",
-        help="Path to the overlayfs mount point"
+        help="Path in which to store the overlay filesystem and its mount point"
     )
     run_parser.add_argument(
         "--persist-overlayfs",
