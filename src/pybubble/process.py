@@ -100,7 +100,7 @@ class SandboxedProcess:
         self,
         input: bytes | None = None,
         timeout: float | None = None,
-        check: bool = True,
+        check: bool = False,
     ) -> tuple[bytes, bytes]:
         """Wait for completion and collect stdout/stderr."""
         if input is not None and self._process.stdin is None:
