@@ -131,9 +131,6 @@ def cmd_run(args):
                 process = await sandbox.run(
                     cmd_str,
                     timeout=args.timeout,
-                    stdin_pipe=not interactive,
-                    stdout_pipe=not interactive,
-                    stderr_pipe=not interactive,
                     use_pty=interactive,
                     ns_pid_override=args.net_share_pid,
                 )

@@ -15,9 +15,6 @@ async def test_pty_stream_output(default_rootfs):
         process = await sandbox.run(
             "echo hello",
             use_pty=True,
-            stdin_pipe=False,
-            stdout_pipe=False,
-            stderr_pipe=False,
         )
 
         chunks: list[bytes] = []
@@ -36,9 +33,6 @@ async def test_pty_stream_decode(default_rootfs):
         process = await sandbox.run(
             "echo decoded",
             use_pty=True,
-            stdin_pipe=False,
-            stdout_pipe=False,
-            stderr_pipe=False,
         )
 
         chunks: list[str] = []
@@ -57,9 +51,6 @@ async def test_pty_stream_include_stream(default_rootfs):
         process = await sandbox.run(
             "echo labelled",
             use_pty=True,
-            stdin_pipe=False,
-            stdout_pipe=False,
-            stderr_pipe=False,
         )
 
         async for name, chunk in process.stream(include_stream=True):
@@ -76,9 +67,6 @@ async def test_pty_stream_lines(default_rootfs):
         process = await sandbox.run(
             "printf 'line1\\nline2\\n'",
             use_pty=True,
-            stdin_pipe=False,
-            stdout_pipe=False,
-            stderr_pipe=False,
         )
 
         lines: list[str] = []
@@ -98,9 +86,6 @@ async def test_pty_send(default_rootfs):
         process = await sandbox.run(
             "cat",
             use_pty=True,
-            stdin_pipe=False,
-            stdout_pipe=False,
-            stderr_pipe=False,
         )
 
         assert process.master_fd is not None
@@ -122,9 +107,6 @@ async def test_pty_set_terminal_size(default_rootfs):
         process = await sandbox.run(
             "sleep 0.1",
             use_pty=True,
-            stdin_pipe=False,
-            stdout_pipe=False,
-            stderr_pipe=False,
         )
 
         # Should not raise
@@ -151,9 +133,6 @@ async def test_pty_close_idempotent(default_rootfs):
         process = await sandbox.run(
             "true",
             use_pty=True,
-            stdin_pipe=False,
-            stdout_pipe=False,
-            stderr_pipe=False,
         )
         await process.wait()
 
@@ -174,8 +153,21 @@ async def test_pty_master_fd_none_without_pty():
 
 
 @pytest.mark.asyncio
-async def test_pty_rejects_pipes():
-    """use_pty=True with stdin_pipe=True should raise ValueError."""
+async def test_pty_and_pipe_stdio_shapes():
+    """PTY mode uses a master fd; pipe mode uses stdin/stdout/stderr pipes."""
     with Sandbox() as sandbox:
-        with pytest.raises(ValueError, match="PTY mode cannot be used"):
-            await sandbox.run("true", use_pty=True, stdin_pipe=True)
+        pty_process = await sandbox.run("true", use_pty=True)
+        assert pty_process.master_fd is not None
+        assert pty_process.stdin is None
+        assert pty_process.stdout is None
+        assert pty_process.stderr is None
+        await pty_process.wait()
+        pty_process.close_pty()
+
+        pipe_process = await sandbox.run("true")
+        assert pipe_process.master_fd is None
+        assert pipe_process.stdin is not None
+        assert pipe_process.stdout is not None
+        assert pipe_process.stderr is not None
+        pipe_process.close_stdin()
+        await pipe_process.wait()

@@ -64,9 +64,6 @@ async def run(
     self,
     command: str,
     timeout: float | None = 10.0,
-    stdin_pipe: bool = True,
-    stdout_pipe: bool = True,
-    stderr_pipe: bool = True,
     use_pty: bool = False,
     ns_pid_override: int | None = None,
 ) -> SandboxedProcess
@@ -78,9 +75,7 @@ Runs a shell command in the sandbox asynchronously and returns a `SandboxedProce
 |---|---|
 | `command` | Shell command to run (passed to `bash -c`). |
 | `timeout` | Default timeout (in seconds) used by `SandboxedProcess.wait()` and `communicate()`. `None` means no timeout. |
-| `stdin_pipe` | Pipe stdin for programmatic input via `send()` / `send_text()`. Ignored when `use_pty` is `True`. |
-| `stdout_pipe` / `stderr_pipe` | Pipe stdout/stderr for programmatic streaming. Ignored when `use_pty` is `True`. |
-| `use_pty` | Allocate a pseudoterminal for the child process. The returned `SandboxedProcess` exposes the master fd via `master_fd` and supports `set_terminal_size()`. Ctrl+C, colors, curses apps, and job control all work in PTY mode. |
+| `use_pty` | Allocate a pseudoterminal for the child process. When `False`, stdin/stdout/stderr are piped. When `True`, the returned `SandboxedProcess` exposes the master fd via `master_fd` and supports `set_terminal_size()`. Ctrl+C, colors, curses apps, and job control all work in PTY mode. |
 | `ns_pid_override` | Join a specific network namespace PID instead of the sandbox's default network namespace. |
 
 ### Pipe mode (default)

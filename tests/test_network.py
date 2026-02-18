@@ -8,16 +8,10 @@ async def test_internal_network(default_rootfs):
     with Sandbox(rootfs=str(default_rootfs)) as sandbox:
         process = await sandbox.run(
             "nc -l -p 8080",
-            stdin_pipe=False,
-            stdout_pipe=False,
-            stderr_pipe=False,
         )
         try:
             response = await sandbox.run(
                 "echo 'Hello, world!' | nc -w 2 localhost 8080",
-                stdin_pipe=False,
-                stdout_pipe=False,
-                stderr_pipe=False,
             )
             _, stderr = await response.communicate()
             assert response.returncode == 0, f"Command failed with exit code {response.returncode}: {stderr}"
@@ -39,9 +33,6 @@ async def test_forward_port(default_rootfs):
         sandbox.forward_port(8080, 22222)
         server = await sandbox.run(
             "nc -l -p 8080",
-            stdin_pipe=False,
-            stdout_pipe=False,
-            stderr_pipe=False,
         )
         try:
             response = subprocess.run(
@@ -67,15 +58,9 @@ async def test_forward_port_multiple(default_rootfs):
         sandbox.forward_port(8081, 22223)
         server1 = await sandbox.run(
             "nc -l -p 8080",
-            stdin_pipe=False,
-            stdout_pipe=False,
-            stderr_pipe=False,
         )
         server2 = await sandbox.run(
             "nc -l -p 8081",
-            stdin_pipe=False,
-            stdout_pipe=False,
-            stderr_pipe=False,
         )
         try:
             response1 = subprocess.run(

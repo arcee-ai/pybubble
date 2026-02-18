@@ -163,9 +163,6 @@ class Sandbox:
         self,
         command: str,
         timeout: float | None = 10.0,
-        stdin_pipe: bool = True,
-        stdout_pipe: bool = True,
-        stderr_pipe: bool = True,
         use_pty: bool = False,
         ns_pid_override: int | None = None,
     ) -> SandboxedProcess:
@@ -174,15 +171,13 @@ class Sandbox:
         Args:
             command: Shell command to run
             timeout: Default timeout in seconds for process waits/communication
-            stdin_pipe: Whether to pipe stdin for programmatic input (ignored when use_pty is True)
-            stdout_pipe: Whether to pipe stdout for programmatic streaming (ignored when use_pty is True)
-            stderr_pipe: Whether to pipe stderr for programmatic streaming (ignored when use_pty is True)
-            use_pty: Allocate a pseudoterminal for the child process.  The
+            use_pty: Allocate a pseudoterminal for the child process. When
+                False, stdin/stdout/stderr are piped. The
                 returned SandboxedProcess exposes the master fd via
                 ``master_fd`` and supports ``set_terminal_size()``.
         """
         process, master_fd = await self._start_process(
-            command, stdin_pipe, stdout_pipe, stderr_pipe, use_pty, ns_pid_override,
+            command, use_pty, ns_pid_override,
         )
         return SandboxedProcess(process, default_timeout=timeout, master_fd=master_fd)
 
@@ -206,9 +201,7 @@ class Sandbox:
 
         process, _ = await self._start_process(
             f"{run_command} /tmp/{script_name}",
-            stdin_pipe=False,
-            stdout_pipe=True,
-            stderr_pipe=True,
+            use_pty=False,
             ns_pid_override=ns_pid_override,
         )
         return SandboxedProcess(process, default_timeout=timeout)
@@ -217,15 +210,9 @@ class Sandbox:
     async def _start_process(
         self,
         command: str,
-        stdin_pipe: bool,
-        stdout_pipe: bool,
-        stderr_pipe: bool,
         use_pty: bool = False,
         ns_pid_override: int | None = None,
     ) -> tuple[asyncio.subprocess.Process, int | None]:
-        if use_pty and (stdin_pipe or stdout_pipe or stderr_pipe):
-            raise ValueError("PTY mode cannot be used with stdin_pipe, stdout_pipe, or stderr_pipe")
-                
         built_command: list[str] = [
             "bwrap",
             "--unshare-all",
@@ -285,9 +272,9 @@ class Sandbox:
         else:
             proc = await asyncio.create_subprocess_exec(
                 *built_command,
-                stdin=subprocess.PIPE if stdin_pipe else None,
-                stdout=subprocess.PIPE if stdout_pipe else None,
-                stderr=subprocess.PIPE if stderr_pipe else None,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
             )
 
         return proc, master_fd
