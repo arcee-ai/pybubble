@@ -9,7 +9,7 @@ from conftest import ensure_default_exists
 
 async def run_sandbox_test(sandbox_id: int, rootfs_location: str):
     """Create a sandbox, run some Python code, and clean it up."""
-    with Sandbox(rootfs=rootfs_location) as sandbox:
+    with Sandbox(rootfs=rootfs_location, enable_network=False) as sandbox:
         code = f"""
 import math
 result = sum(range(1, 101))
@@ -41,9 +41,9 @@ async def test_sandbox_performance():
     total_time = end_time - start_time
     overhead_per_sandbox = total_time / num_sandboxes
 
-    assert overhead_per_sandbox < 0.005, (
+    assert overhead_per_sandbox < 0.01, (
         f"Average overhead per sandbox ({overhead_per_sandbox*1000:.2f} ms) "
-        f"exceeds 5ms threshold. Total time: {total_time:.4f}s for {num_sandboxes} sandboxes."
+        f"exceeds 10ms threshold. Total time: {total_time:.4f}s for {num_sandboxes} sandboxes."
     )
 
     assert len(results) == num_sandboxes

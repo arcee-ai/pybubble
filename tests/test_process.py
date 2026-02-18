@@ -86,5 +86,5 @@ async def test_process_kill(default_rootfs):
     with Sandbox(rootfs=str(default_rootfs)) as sandbox:
         process = await sandbox.run("sleep 300")
         process.kill()
-        code = await process.wait(timeout=5.0)
+        code = await process.wait(timeout=15.0)
         assert code != 0

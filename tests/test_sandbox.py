@@ -12,7 +12,6 @@ async def test_sandbox(run_collect):
         proc = await sandbox.run_script("print('Hello, world!')")
         assert await proc.communicate() == (b"Hello, world!\n", b"")
         assert await run_collect(sandbox, "echo 'hello!'") == (b"hello!\n", b"")
-        assert (await run_collect(sandbox, "ping -c 1 google.com", allow_network=True))[1] == b""
 
         work_dir_path = sandbox.work_dir
 

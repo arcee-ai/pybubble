@@ -98,6 +98,16 @@ def cmd_run(args):
             print("Error: --persist-overlayfs can only be used when --rootfs-overlay is enabled", file=sys.stderr)
             return 1
 
+        forward_ports = {}
+        if args.forward_port:
+            try:
+                for port_pair in args.forward_port.split(","):
+                    sandbox_port, host_port = port_pair.split(":")
+                    forward_ports[int(sandbox_port)] = int(host_port)
+            except Exception as e:
+                print(f"Error: {e}", file=sys.stderr)
+                return 1
+
         with Sandbox(
             work_dir=args.work_dir,
             rootfs=args.rootfs,
@@ -105,16 +115,27 @@ def cmd_run(args):
             rootfs_overlay=args.rootfs_overlay,
             rootfs_overlay_path=args.rootfs_overlay_path,
             persist_overlayfs=args.persist_overlayfs,
+            enable_outbound=not args.no_outbound,
+            allow_host_loopback=args.allow_host_loopback,
         ) as sandbox:
             try:
+                if args.share_net:
+                    if sandbox.network is None:
+                        print("Error: Network namespace not available - is slirp4netns installed?", file=sys.stderr)
+                        return 1
+                    print(f"Network namespace PID: {sandbox.network.namespace_watchdog.pid}")
+                
+                for sandbox_port, host_port in forward_ports.items():
+                    sandbox.forward_port(sandbox_port, host_port)
+                
                 process = await sandbox.run(
                     cmd_str,
-                    allow_network=not args.no_network,
                     timeout=args.timeout,
                     stdin_pipe=not interactive,
                     stdout_pipe=not interactive,
                     stderr_pipe=not interactive,
                     use_pty=interactive,
+                    ns_pid_override=args.net_share_pid,
                 )
 
                 if interactive:
@@ -190,9 +211,31 @@ def main():
         help="Path to extract/cache rootfs (default: auto-generated cache path)"
     )
     run_parser.add_argument(
-        "--no-network",
+        "--no-outbound",
         action="store_true",
-        help="Allow network access"
+        help="Disallow access to host network (including forwarded ports)"
+    )
+    run_parser.add_argument(
+        "--share-net",
+        action="store_true",
+        help="Print a network namespace PID to use in another process with --net-share-pid"
+    )
+    run_parser.add_argument(
+        "--net-share-pid",
+        type=int,
+        default=None,
+        help="Network namespace PID to share with another process"
+    )
+    run_parser.add_argument(
+        "--forward-port",
+        type=str,
+        default=None,
+        help="Forward a port on the sandbox to the host. Format: \"<sandbox_port>:<host_port>,<sandbox_port>:<host_port>,...\""
+    )
+    run_parser.add_argument(
+        "--allow-host-loopback",
+        action="store_true",
+        help="Allow the sandbox to access running servers on the host"
     )
     run_parser.add_argument(
         "--timeout",

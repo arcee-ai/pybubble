@@ -4,7 +4,7 @@ Sandbox objects manage an unpacked root filesystem (stored, usually, in `~/.cach
 
 Unless you pass `work_dir` to the constructor, the session directory will be automatically deleted when the Sandbox is closed or goes out of scope. The directory bound to `/tmp` will always be deleted when a sandbox is closed.
 
-Programs running in the sandbox see a read-only root filesystem (unless an overlay is enabled) and a writable partition at `/home/sandbox`, which is also the default working directory. When `allow_network=True` is passed to `run()` or `run_script()`, a read-only copy of `/etc/resolv.conf` is mounted for DNS resolution. A separate writable directory is used under the host's `/tmp` for the sandbox's `/tmp`.
+Programs running in the sandbox see a read-only root filesystem (unless an overlay is enabled) and a writable filesystem at `/home/sandbox`, which is also the default working directory. Networking is configured on the `Sandbox` constructor (`enable_network`, `enable_outbound`, `allow_host_loopback`) rather than per `run()` call. A separate writable directory is used under the host's `/tmp` for the sandbox's `/tmp`.
 
 The sandbox runs with its own hostname (`sandbox`), its own PID namespace, and an isolated user namespace.
 
@@ -13,10 +13,9 @@ The sandbox runs with its own hostname (`sandbox`), its own PID namespace, and a
 `Sandbox` implements the context manager protocol.  This is the recommended way to use it, especially when overlay filesystems are enabled, since `close()` must run to unmount the FUSE overlay.
 
 ```python
-async with Sandbox() as sbox:
+with Sandbox() as sbox:
     proc = await sbox.run("echo hello")
     stdout, stderr = await proc.communicate()
-# overlay unmounted, temp dirs cleaned up
 ```
 
 You can also call `close()` manually:
@@ -38,6 +37,9 @@ def __init__(
     rootfs_overlay: bool = False,
     rootfs_overlay_path: str | Path | None = None,
     persist_overlayfs: bool = False,
+    enable_network: bool = True,
+    enable_outbound: bool = False,
+    allow_host_loopback: bool = False,
 )
 ```
 
@@ -51,6 +53,9 @@ Creates a sandbox from the specified `rootfs` tarball, expected to be in the for
 | `rootfs_overlay` | When `True`, mount a `fuse-overlayfs` layer on top of the read-only rootfs so the sandbox can write to `/usr`, `/etc`, etc. Requires `fuse-overlayfs` to be installed. |
 | `rootfs_overlay_path` | Directory for the overlay `upper/`, `work/`, and `mount/` subdirectories. If `None`, a temporary directory in `/tmp` is used. |
 | `persist_overlayfs` | When `True`, the overlay is **not** unmounted on close — useful for exporting the modified filesystem. Requires `rootfs_overlay_path` to be set. |
+| `enable_network` | Enable the sandbox's internal network namespace. |
+| `enable_outbound` | Enable outbound internet access (requires `slirp4netns`). |
+| `allow_host_loopback` | Allow access from the sandbox to host loopback address at 10.0.2.2. |
 
 ## `run()`
 
@@ -58,12 +63,12 @@ Creates a sandbox from the specified `rootfs` tarball, expected to be in the for
 async def run(
     self,
     command: str,
-    allow_network: bool = False,
     timeout: float | None = 10.0,
     stdin_pipe: bool = True,
     stdout_pipe: bool = True,
     stderr_pipe: bool = True,
     use_pty: bool = False,
+    ns_pid_override: int | None = None,
 ) -> SandboxedProcess
 ```
 
@@ -72,11 +77,11 @@ Runs a shell command in the sandbox asynchronously and returns a `SandboxedProce
 | Parameter | Description |
 |---|---|
 | `command` | Shell command to run (passed to `bash -c`). |
-| `allow_network` | Grant network access and mount the host's `/etc/resolv.conf` for DNS. |
 | `timeout` | Default timeout (in seconds) used by `SandboxedProcess.wait()` and `communicate()`. `None` means no timeout. |
 | `stdin_pipe` | Pipe stdin for programmatic input via `send()` / `send_text()`. Ignored when `use_pty` is `True`. |
 | `stdout_pipe` / `stderr_pipe` | Pipe stdout/stderr for programmatic streaming. Ignored when `use_pty` is `True`. |
 | `use_pty` | Allocate a pseudoterminal for the child process. The returned `SandboxedProcess` exposes the master fd via `master_fd` and supports `set_terminal_size()`. Ctrl+C, colors, curses apps, and job control all work in PTY mode. |
+| `ns_pid_override` | Join a specific network namespace PID instead of the sandbox's default network namespace. |
 
 ### Pipe mode (default)
 
@@ -140,10 +145,10 @@ PTY mode also works without a host terminal attached (e.g., in a web server or C
 async def run_script(
     self,
     code: str,
-    allow_network: bool = False,
     timeout: float | None = 10.0,
     run_command: str = "python",
     extension: str = "py",
+    ns_pid_override: int | None = None,
 ) -> SandboxedProcess
 ```
 
@@ -151,6 +156,15 @@ Writes `code` to a temporary file and runs it with `run_command`. Defaults to Py
 
 ```python
 stdout, stderr = await (await sandbox.run_script("print('hi')")).communicate()
+```
+
+## Networking helpers
+
+When networking is enabled, `sandbox.network` holds the `SandboxNetwork` object (otherwise it is `None`).
+
+```python
+with Sandbox(enable_outbound=True) as sandbox:
+    sandbox.forward_port(8080, 18080)
 ```
 
 ## Accessing session data

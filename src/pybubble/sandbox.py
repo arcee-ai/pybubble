@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import uuid
 
+from pybubble.network import SandboxNetwork
 from pybubble.process import SandboxedProcess
 from pybubble.rootfs import setup_rootfs
 
@@ -33,7 +34,7 @@ def is_installed(command: list[str]) -> bool:
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         return False
 
-def is_system_compatible() -> bool:
+def system_supports_bwrap() -> bool:
     """Checks if the system has bubblewrap installed."""
     return is_installed(["bwrap", "--help"])
 
@@ -50,6 +51,9 @@ class Sandbox:
         rootfs_overlay: bool = False,
         rootfs_overlay_path: str | Path | None = None,
         persist_overlayfs: bool = False,
+        enable_network: bool = True,
+        enable_outbound: bool = False,
+        allow_host_loopback: bool = False,
     ):
         """Creates a sandbox from the specified rootfs tarball, expected to be in the form of a tarball or compressed tarball.
         
@@ -61,10 +65,20 @@ class Sandbox:
             rootfs_overlay: Whether to allow writing to the rootfs via fuse-overlayfs (default: False)
             rootfs_overlay_path: Path to the overlayfs directory. If None, uses a unique directory in `/tmp` (default: None)
             persist_overlayfs: Whether to skip unmounting the overlayfs after the sandbox exits. rootfs_overlay_path must be provided when this is True. (default: False)
+            enable_network: Whether to enable networking within the sandbox. (default: True)
+            enable_outbound: Whether to enable outbound network access from the sandbox. (default: False)
+            allow_host_loopback: Whether to allow the sandbox to access the host loopback interface at 10.0.2.2. (default: False)
         """
         
-        if not is_system_compatible():
+        if not system_supports_bwrap():
             raise RuntimeError("Bubblewrap was not found. Please ensure it is installed and in your PATH.")
+        
+        self.network: SandboxNetwork | None = None
+        if enable_network:
+            self.network = SandboxNetwork(
+                enable_outbound=enable_outbound,
+                allow_host_loopback=allow_host_loopback,
+            )
         
         # Fall back to the bundled rootfs when none is provided
         if rootfs is None:
@@ -88,7 +102,6 @@ class Sandbox:
         
         # Temp directory to mount at /tmp
         self.tmp_dir = tempfile.TemporaryDirectory(dir="/tmp")
-        
         # Convert rootfs_path to Path if provided, otherwise None (which triggers caching)
         rootfs_path_obj = Path(rootfs_path) if rootfs_path is not None else None
         
@@ -139,23 +152,27 @@ class Sandbox:
             self.rootfs_overlay_lowerdir = None
             self.rootfs_overlay_upperdir = None
             self.rootfs_overlay_workdir = None
-            
+
+    def forward_port(self, sandbox_port: int, host_port: int, proto: str = "tcp") -> dict:
+        """Makes a port on the sandbox available on the host."""
+        if self.network is None:
+            raise RuntimeError("Port forwarding requires enable_network=True.")
+        return self.network.forward_port(sandbox_port, host_port, proto=proto)
 
     async def run(
         self,
         command: str,
-        allow_network: bool = False,
         timeout: float | None = 10.0,
         stdin_pipe: bool = True,
         stdout_pipe: bool = True,
         stderr_pipe: bool = True,
         use_pty: bool = False,
+        ns_pid_override: int | None = None,
     ) -> SandboxedProcess:
         """Runs a shell command in the sandbox. Returns a SandboxedProcess.
         
         Args:
             command: Shell command to run
-            allow_network: Whether to allow network access
             timeout: Default timeout in seconds for process waits/communication
             stdin_pipe: Whether to pipe stdin for programmatic input (ignored when use_pty is True)
             stdout_pipe: Whether to pipe stdout for programmatic streaming (ignored when use_pty is True)
@@ -165,11 +182,11 @@ class Sandbox:
                 ``master_fd`` and supports ``set_terminal_size()``.
         """
         process, master_fd = await self._start_process(
-            command, allow_network, stdin_pipe, stdout_pipe, stderr_pipe, use_pty
+            command, stdin_pipe, stdout_pipe, stderr_pipe, use_pty, ns_pid_override,
         )
         return SandboxedProcess(process, default_timeout=timeout, master_fd=master_fd)
 
-    async def run_script(self, code: str, allow_network: bool = False, timeout: float | None = 10.0, run_command: str = "python", extension: str = "py") -> SandboxedProcess:
+    async def run_script(self, code: str, timeout: float | None = 10.0, run_command: str = "python", extension: str = "py", ns_pid_override: int | None = None) -> SandboxedProcess:
         """Write a script to a temporary file and run it in the sandbox.
 
         Returns a ``SandboxedProcess`` so the caller can stream output,
@@ -189,10 +206,10 @@ class Sandbox:
 
         process, _ = await self._start_process(
             f"{run_command} /tmp/{script_name}",
-            allow_network,
             stdin_pipe=False,
             stdout_pipe=True,
             stderr_pipe=True,
+            ns_pid_override=ns_pid_override,
         )
         return SandboxedProcess(process, default_timeout=timeout)
 
@@ -200,20 +217,21 @@ class Sandbox:
     async def _start_process(
         self,
         command: str,
-        allow_network: bool,
         stdin_pipe: bool,
         stdout_pipe: bool,
         stderr_pipe: bool,
         use_pty: bool = False,
+        ns_pid_override: int | None = None,
     ) -> tuple[asyncio.subprocess.Process, int | None]:
         if use_pty and (stdin_pipe or stdout_pipe or stderr_pipe):
             raise ValueError("PTY mode cannot be used with stdin_pipe, stdout_pipe, or stderr_pipe")
-        
+                
         built_command: list[str] = [
             "bwrap",
             "--unshare-all",
             "--die-with-parent",
             "--uid", "1000",
+            "--gid", "1000",
             "--hostname", "sandbox",
             "--ro-bind" if not self.rootfs_overlay else "--bind", str(self.rootfs_dir.absolute()), "/",
             "--bind", str(self.work_dir.absolute()), "/home/sandbox",
@@ -223,21 +241,23 @@ class Sandbox:
             "--clearenv",
             "--setenv", "HOME", "/home/sandbox",
             "--setenv", "PATH", "/usr/bin:/bin:/usr/local/bin:/sbin/",
-            "--chdir", "/home/sandbox",
+            "--chdir", "/home/sandbox"
         ]
+
+        if self.network is not None:
+            ns_pid = self.network.namespace_pid(ns_pid_override)
+            await self.network.ensure_network_ready(ns_pid)
+            built_command = self.network.wrap_command(built_command, ns_pid)
+            built_command.extend(self.network.bwrap_args())
 
         # --new-session mitigates an attack where the child process can take over the terminal that called it by injecting inputs.
         # When we use a PTY, this attack is instead mitigated by the fact that the child process only has access to the PTY, not the host terminal.
         if not use_pty:
             built_command.append("--new-session")
         
-        if allow_network:
-            built_command.extend(["--ro-bind", "/etc/resolv.conf", "/etc/resolv.conf", "--share-net"])
-        
         built_command.extend(["bash", "-c", command])
         
         master_fd: int | None = None
-
         if use_pty:
             master_fd, slave_fd = os.openpty()
             try:
@@ -292,6 +312,9 @@ class Sandbox:
         if hasattr(self, "_temp_dir") and self._temp_dir is not None:
             self._temp_dir.cleanup()
             self._temp_dir = None
+        if hasattr(self, "network") and self.network is not None:
+            self.network.close()
+            self.network = None
 
     def __enter__(self) -> "Sandbox":
         return self

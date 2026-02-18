@@ -13,19 +13,25 @@ Due to relying on Linux kernel features to operate, pybubble is not compatible w
 Install `bwrap`. On Ubuntu, do:
 
 ```bash
-sudo apt-get install bubblewrap
+$ sudo apt-get install bubblewrap
 ```
 
 Optionally, for overlay filesystem support (writable rootfs without modifying the original):
 
 ```bash
-sudo apt-get install fuse-overlayfs
+$ sudo apt-get install fuse-overlayfs
+```
+
+To connect sandboxed processes with an internal network or give them access to the outside internet, you'll need `slirp4netns`:
+
+```bash
+$ sudo apt-get install slirp4netns
 ```
 
 Then, add `pybubble` to your project.
 
 ```bash
-uv add pybubble
+$ uv add pybubble
 ```
 
 ## Root filesystem archives
@@ -52,8 +58,8 @@ from pybubble import Sandbox
 import asyncio
 
 async def main():
-    with Sandbox() as sbox:
-        process = await sbox.run("ping -c 1 google.com", allow_network=True)
+    with Sandbox(enable_outbound=True) as sbox:
+        process = await sbox.run("ping -c 1 google.com")
         stdout, stderr = await process.communicate()
         print(stdout.decode())
 
@@ -87,9 +93,24 @@ async def main():
 With `fuse-overlayfs` installed, you can make the rootfs writable without modifying the cached original:
 
 ```python
-with Sandbox(rootfs_overlay=True) as sbox:
-    proc = await sbox.run("apk add git", allow_network=True)
+with Sandbox(rootfs_overlay=True, enable_outbound=True) as sbox:
+    proc = await sbox.run("apk add git")
     await proc.communicate()
+```
+
+## Networking
+
+`Sandbox` networking is configured on construction:
+
+- `enable_network=True` enables an isolated internal network namespace.
+- `enable_outbound=True` adds outbound internet access via `slirp4netns`.
+- `allow_host_loopback=True` allows access to host loopback services.
+
+Port forwarding is available via `forward_port(...)`:
+
+```python
+with Sandbox(enable_outbound=True) as sbox:
+    sbox.forward_port(8080, 18080)  # sandbox:8080 -> host:18080
 ```
 
 ## Use the CLI
