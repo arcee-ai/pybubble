@@ -22,11 +22,13 @@ Optionally, for overlay filesystem support (writable rootfs without modifying th
 $ sudo apt-get install fuse-overlayfs
 ```
 
-To connect sandboxed processes with an internal network or give them access to the outside internet, you'll need `slirp4netns`:
+For outbound internet access (or port forwarding via `enable_outbound=True`), install `slirp4netns`:
 
 ```bash
 $ sudo apt-get install slirp4netns
 ```
+
+Basic internal networking (`enable_network=True`) does not require `slirp4netns`.
 
 Then, add `pybubble` to your project.
 
@@ -105,6 +107,8 @@ with Sandbox(rootfs_overlay=True, enable_outbound=True) as sbox:
 - `enable_network=True` enables an isolated internal network namespace.
 - `enable_outbound=True` adds outbound internet access via `slirp4netns`.
 - `allow_host_loopback=True` allows access to host loopback services.
+
+If you only need internal networking between sandboxed processes, leave outbound disabled and `slirp4netns` is not required.
 
 Port forwarding is available via `forward_port(...)`:
 

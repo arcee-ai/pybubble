@@ -53,7 +53,7 @@ Creates a sandbox from the specified `rootfs` tarball, expected to be in the for
 | `rootfs_overlay` | When `True`, mount a `fuse-overlayfs` layer on top of the read-only rootfs so the sandbox can write to `/usr`, `/etc`, etc. Requires `fuse-overlayfs` to be installed. |
 | `rootfs_overlay_path` | Directory for the overlay `upper/`, `work/`, and `mount/` subdirectories. If `None`, a temporary directory in `/tmp` is used. |
 | `persist_overlayfs` | When `True`, the overlay is **not** unmounted on close — useful for exporting the modified filesystem. Requires `rootfs_overlay_path` to be set. |
-| `enable_network` | Enable the sandbox's internal network namespace. |
+| `enable_network` | Enable the sandbox's internal network namespace (does not require `slirp4netns`). |
 | `enable_outbound` | Enable outbound internet access (requires `slirp4netns`). |
 | `allow_host_loopback` | Allow access from the sandbox to host loopback address at 10.0.2.2. |
 

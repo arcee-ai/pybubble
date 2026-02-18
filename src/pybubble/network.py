@@ -30,11 +30,6 @@ def system_supports_slirp4netns() -> bool:
 
 class SandboxNetwork:
     def __init__(self, *, enable_outbound: bool = False, allow_host_loopback: bool = False):
-        if not system_supports_slirp4netns():
-            raise ValueError(
-                "slirp4netns was not found, but enable_network was True. Please ensure it is installed and in your PATH."
-            )
-
         self.namespace_watchdog: subprocess.Popen | None = None
         self.hosts_tmp = None
         self.resolv_tmp = None
@@ -64,6 +59,8 @@ class SandboxNetwork:
             self.hosts_tmp.flush()
 
             if enable_outbound:
+                if not system_supports_slirp4netns():
+                    raise RuntimeError("slirp4netns was not found, but enable_outbound was True. Please ensure it is installed and in your PATH.")
                 self.bridge_api_socket = NamedTemporaryFile(dir="/tmp", suffix=".sock")
                 bridge_cmd = [
                     "slirp4netns",
